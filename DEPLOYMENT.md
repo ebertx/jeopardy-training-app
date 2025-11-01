@@ -10,15 +10,17 @@ This guide sets up automated deployments from GitHub to your Unraid server using
 3. Image pushed to GitHub Container Registry (GHCR)
 4. Watchtower on Unraid detects new image
 5. Container automatically updated and restarted
-6. Accessible via Traefik reverse proxy (Tailscale-only)
+6. Accessible via Traefik reverse proxy at jeopardy.ebertx.com
 
 ---
 
 ## One-Time Setup (For All Apps)
 
-### 1. Install Traefik on Unraid
+### 1. Configure Traefik on Unraid (Installed via Community Apps)
 
-Create `/mnt/user/appdata/traefik/traefik.yml`:
+Since Traefik is installed via Unraid Community Apps and uses ports 8001/44301, we need to configure it for Cloudflare DNS challenge.
+
+**Create `/mnt/user/appdata/traefik/traefik.yml`:**
 
 ```yaml
 api:
@@ -39,10 +41,13 @@ entryPoints:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: your-email@example.com  # CHANGE THIS
+      email: ebertx@gmail.com
       storage: /letsencrypt/acme.json
-      httpChallenge:
-        entryPoint: web
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
 
 providers:
   docker:
@@ -54,44 +59,13 @@ log:
   level: INFO
 ```
 
-Create Traefik docker-compose in `/mnt/user/appdata/traefik/docker-compose.yml`:
+**Add Cloudflare credentials to Traefik container:**
 
-```yaml
-version: '3.8'
+Edit your Traefik container in Unraid and add these environment variables:
+- `CF_API_EMAIL=ebertx@gmail.com`
+- `CF_DNS_API_TOKEN=e1HHBX5kFli0kwHm4XNN-HDboizF9_3TQpVCrxyW`
 
-services:
-  traefik:
-    image: traefik:v2.10
-    container_name: traefik
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"  # Dashboard
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./letsencrypt:/letsencrypt
-    networks:
-      - traefik
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.yourdomain.com`)"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.entrypoints=websecure"
-      - "traefik.http.routers.traefik.tls=true"
-
-networks:
-  traefik:
-    name: traefik
-    driver: bridge
-```
-
-Start Traefik:
-```bash
-cd /mnt/user/appdata/traefik
-docker-compose up -d
-```
+**Restart Traefik** after making these changes.
 
 ### 2. Install Watchtower on Unraid
 
@@ -110,19 +84,22 @@ docker run -d \
 
 This checks for updates every 5 minutes (300 seconds).
 
-### 3. Configure Your Domain DNS
+### 3. Configure DNS and Port Forwarding
 
-Point your subdomain to your Unraid server's Tailscale IP:
-
-**In your DNS provider:**
+**In Cloudflare DNS:**
 - Type: A Record
-- Name: `jeopardy` (or `*.yourdomain.com` for wildcard)
-- Value: Your Unraid Tailscale IP (e.g., `100.x.x.x`)
-- TTL: 3600
+- Name: `jeopardy`
+- Value: Your public IP address
+- Proxy status: DNS only (gray cloud, not proxied)
+- TTL: Auto
 
-**Note:** Since you're using Tailscale, this DNS record only needs to resolve within your Tailscale network. You can use:
-- Split DNS via Tailscale MagicDNS
-- Or just use your public domain with Tailscale IP (won't be accessible outside Tailscale)
+**Configure Router Port Forwarding:**
+
+Since Traefik runs on ports 8001/44301, you need to forward standard ports to these:
+- External Port 80 → Unraid IP:8001
+- External Port 443 → Unraid IP:44301
+
+This allows public internet traffic on standard ports to reach Traefik.
 
 ---
 
@@ -152,7 +129,7 @@ Create `.env` file:
 cat > .env << 'EOF'
 DATABASE_URL=postgresql://ebertx:C&M24postgres@100.92.27.16/jeopardy
 NEXTAUTH_SECRET=j5keXeQun/N0X9bxMgQgkfoSAMnbTGI0vA7F05H+qTU=
-NEXTAUTH_URL=https://jeopardy.yourdomain.com
+NEXTAUTH_URL=https://jeopardy.ebertx.com
 EOF
 ```
 
@@ -162,10 +139,7 @@ Copy `docker-compose.yml` from this repository to the server:
 scp docker-compose.yml root@unraid-ip:/mnt/user/appdata/jeopardy-training-app/
 ```
 
-**Edit docker-compose.yml** - Update the domain:
-```yaml
-- "traefik.http.routers.jeopardy.rule=Host(`jeopardy.yourdomain.com`)"
-```
+The domain is already configured as `jeopardy.ebertx.com` in docker-compose.yml.
 
 Start the container:
 ```bash
@@ -183,7 +157,7 @@ docker logs jeopardy-training-app
 
 Check Traefik dashboard: `http://unraid-ip:8080`
 
-Access your app: `https://jeopardy.yourdomain.com` (via Tailscale)
+Access your app: `https://jeopardy.ebertx.com`
 
 ---
 
