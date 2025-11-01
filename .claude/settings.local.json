@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql:*)",
+      "Bash(python3:*)",
+      "Bash(npx create-next-app:*)",
+      "Read(//Users/atropos/ai/jeopardy/**)",
+      "Bash(npm install)",
+      "Bash(npx prisma init)",
+      "Bash(npx prisma db pull:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(openssl rand:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npm install:*)",
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

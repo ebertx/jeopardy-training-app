@@ -1,0 +1,270 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useSession, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+
+interface CategoryStat {
+  category: string;
+  total: number;
+  correct: number;
+  accuracy: number;
+}
+
+interface Stats {
+  overall: {
+    total: number;
+    correct: number;
+    accuracy: number;
+  };
+  categoryBreakdown: CategoryStat[];
+  recentSessions: Array<{
+    id: number;
+    started_at: string;
+    completed_at: string | null;
+    total: number;
+    correct: number;
+  }>;
+}
+
+export default function DashboardPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (status === "unauthenticated") {
+      router.push("/login");
+    }
+  }, [status, router]);
+
+  useEffect(() => {
+    if (status === "authenticated") {
+      fetchStats();
+    }
+  }, [status]);
+
+  const fetchStats = async () => {
+    try {
+      const response = await fetch("/api/stats");
+      const data = await response.json();
+      setStats(data);
+    } catch (error) {
+      console.error("Error fetching stats:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (status === "loading" || loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-xl">No data available</div>
+      </div>
+    );
+  }
+
+  // Get color based on accuracy
+  const getAccuracyColor = (accuracy: number) => {
+    if (accuracy >= 75) return "#10b981"; // green
+    if (accuracy >= 50) return "#f59e0b"; // yellow
+    return "#ef4444"; // red
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      {/* Header */}
+      <div className="bg-jeopardy-blue text-white p-4">
+        <div className="max-w-6xl mx-auto flex justify-between items-center">
+          <h1 className="text-2xl font-bold">Performance Dashboard</h1>
+          <div className="flex items-center gap-6">
+            <span className="text-sm">Welcome, {session?.user?.username}!</span>
+            <Link href="/quiz" className="hover:underline">
+              Quiz
+            </Link>
+            <Link href="/review" className="hover:underline">
+              Review
+            </Link>
+            <Link href="/mastered" className="hover:underline">
+              Mastered
+            </Link>
+            <Link href="/study" className="hover:underline">
+              Study
+            </Link>
+            <Link href="/settings" className="hover:underline">
+              Settings
+            </Link>
+            <button
+              onClick={() => signOut({ callbackUrl: "/" })}
+              className="hover:underline text-sm"
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto p-8">
+        {/* Overall Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-gray-600 text-sm font-medium mb-2">Total Questions</h3>
+            <p className="text-3xl font-bold text-jeopardy-blue">{stats.overall.total}</p>
+          </div>
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-gray-600 text-sm font-medium mb-2">Correct Answers</h3>
+            <p className="text-3xl font-bold text-green-600">{stats.overall.correct}</p>
+          </div>
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h3 className="text-gray-600 text-sm font-medium mb-2">Overall Accuracy</h3>
+            <p className="text-3xl font-bold text-jeopardy-blue">{stats.overall.accuracy}%</p>
+          </div>
+        </div>
+
+        {/* Category Performance */}
+        {stats.categoryBreakdown.length > 0 && (
+          <div className="bg-white p-6 rounded-lg shadow mb-8">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">
+              Performance by Category
+            </h2>
+            <ResponsiveContainer width="100%" height={400}>
+              <BarChart data={stats.categoryBreakdown}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="category"
+                  angle={-45}
+                  textAnchor="end"
+                  height={150}
+                  interval={0}
+                  style={{ fontSize: "12px" }}
+                />
+                <YAxis domain={[0, 100]} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="accuracy" name="Accuracy %" fill="#060CE9">
+                  {stats.categoryBreakdown.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={getAccuracyColor(entry.accuracy)} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Category Breakdown Table */}
+        {stats.categoryBreakdown.length > 0 && (
+          <div className="bg-white p-6 rounded-lg shadow mb-8">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">
+              Category Details
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Category
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Total
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Correct
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Accuracy
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {stats.categoryBreakdown
+                    .sort((a, b) => a.accuracy - b.accuracy)
+                    .map((cat) => (
+                      <tr key={cat.category}>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {cat.category}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {cat.total}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {cat.correct}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {cat.accuracy}%
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                          {cat.accuracy >= 75 ? (
+                            <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                              Strong
+                            </span>
+                          ) : cat.accuracy >= 50 ? (
+                            <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+                              Moderate
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+                              Needs Work
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Start Quiz Button */}
+        <div className="text-center">
+          <Link
+            href="/quiz"
+            className="inline-block px-8 py-4 bg-jeopardy-blue text-white font-bold text-xl rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Start Quiz
+          </Link>
+          {stats.overall.total > 0 && (
+            <>
+              <Link
+                href="/review"
+                className="inline-block ml-4 px-8 py-4 bg-gray-600 text-white font-bold text-xl rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Review Wrong Answers
+              </Link>
+              <Link
+                href="/mastered"
+                className="inline-block ml-4 px-8 py-4 bg-green-700 text-white font-bold text-xl rounded-lg hover:bg-green-800 transition-colors"
+              >
+                Review Mastered Questions
+              </Link>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
