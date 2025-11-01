@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { openai } from "@/lib/openai";
+import { getOpenAI } from "@/lib/openai";
 
 interface StudyTopic {
   topic: string;
@@ -127,7 +127,7 @@ Return your response as JSON in this exact format:
 }`;
 
     // Call OpenAI API
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
