@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     // Group questions by classifier_category
     const categorizedQuestions: Record<string, Array<{ question: string; answer: string; category: string }>> = {};
 
-    incorrectAttempts.forEach((attempt) => {
+    incorrectAttempts.forEach((attempt: any) => {
       const cat = attempt.question.classifier_category || "Uncategorized";
       if (!categorizedQuestions[cat]) {
         categorizedQuestions[cat] = [];

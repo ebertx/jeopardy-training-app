@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Navigation from "../components/Navigation";
 
 interface ArchivedQuestion {
   id: number;
@@ -87,26 +88,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <div className="bg-jeopardy-blue text-white p-4">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Settings & Archived Questions</h1>
-          <div className="flex items-center gap-6">
-            <Link href="/quiz" className="hover:underline">
-              Quiz
-            </Link>
-            <Link href="/review" className="hover:underline">
-              Review
-            </Link>
-            <Link href="/study" className="hover:underline">
-              Study
-            </Link>
-            <Link href="/dashboard" className="hover:underline">
-              Dashboard
-            </Link>
-          </div>
-        </div>
-      </div>
+      <Navigation title="Settings & Archived Questions" username={session?.user?.username} />
 
       <div className="max-w-6xl mx-auto p-8">
         {/* Archived Questions Section */}

@@ -54,7 +54,7 @@ export async function GET() {
     `;
 
     // Convert bigint to number for JSON serialization
-    const formattedCategoryBreakdown = categoryBreakdown.map((cat) => ({
+    const formattedCategoryBreakdown = categoryBreakdown.map((cat: any) => ({
       category: cat.classifier_category,
       total: Number(cat.total),
       correct: Number(cat.correct),
@@ -77,12 +77,12 @@ export async function GET() {
       },
     });
 
-    const formattedSessions = recentSessions.map((session) => ({
+    const formattedSessions = recentSessions.map((session: any) => ({
       id: session.id,
       started_at: session.started_at,
       completed_at: session.completed_at,
       total: session.question_attempts.length,
-      correct: session.question_attempts.filter((a) => a.correct).length,
+      correct: session.question_attempts.filter((a: any) => a.correct).length,
     }));
 
     return NextResponse.json({
