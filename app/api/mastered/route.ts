@@ -48,7 +48,7 @@ export async function GET(req: Request) {
     let filteredRecords = masteryRecords;
     if (category && category !== "all") {
       filteredRecords = masteryRecords.filter(
-        (record) => record.question.classifier_category === category
+        (record: any) => record.question.classifier_category === category
       );
     }
 

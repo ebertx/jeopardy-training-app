@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Navigation from "../components/Navigation";
 
 interface Question {
   id: number;
@@ -231,33 +232,16 @@ export default function QuizPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <div className="bg-jeopardy-blue text-white p-4">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Jeopardy! Training</h1>
-          <div className="flex items-center gap-6">
-            <div className="text-sm">
-              Session: {stats.correct}/{stats.total} ({accuracy}%)
-            </div>
-            <Link href="/dashboard" className="hover:underline">
-              Dashboard
-            </Link>
-            <Link href="/review" className="hover:underline">
-              Review
-            </Link>
-            <Link href="/mastered" className="hover:underline">
-              Mastered
-            </Link>
-            <Link href="/study" className="hover:underline">
-              Study
-            </Link>
-          </div>
-        </div>
-      </div>
+      <Navigation title="Jeopardy! Training" username={session?.user?.username} />
 
-      {/* Category Filter */}
+      {/* Session Stats & Category Filter */}
       <div className="bg-white shadow-sm p-4">
         <div className="max-w-6xl mx-auto">
+          <div className="mb-4 text-center">
+            <span className="text-sm font-medium text-gray-700">
+              Session: {stats.correct}/{stats.total} ({accuracy}%)
+            </span>
+          </div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Category Filter:
           </label>

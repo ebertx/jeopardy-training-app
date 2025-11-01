@@ -24,7 +24,7 @@ export async function GET() {
       },
     });
 
-    const formattedCategories = categories.map((cat) => ({
+    const formattedCategories = categories.map((cat: any) => ({
       name: cat.classifier_category,
       count: cat._count.classifier_category,
     }));
