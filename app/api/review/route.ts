@@ -27,7 +27,7 @@ export async function GET(req: Request) {
       },
     });
 
-    const questionIds = incorrectQuestionIds.map(q => q.question_id);
+    const questionIds = incorrectQuestionIds.map((q: any) => q.question_id);
 
     if (questionIds.length === 0) {
       return NextResponse.json([]);
@@ -43,11 +43,11 @@ export async function GET(req: Request) {
 
     // Filter out mastered questions
     const masteredQuestionIds = new Set(
-      masteryRecords.filter(m => m.mastered).map(m => m.question_id)
+      masteryRecords.filter((m: any) => m.mastered).map((m: any) => m.question_id)
     );
 
     const unmasteredQuestionIds = questionIds.filter(
-      id => !masteredQuestionIds.has(id)
+      (id: any) => !masteredQuestionIds.has(id)
     );
 
     if (unmasteredQuestionIds.length === 0) {
@@ -81,12 +81,12 @@ export async function GET(req: Request) {
 
     // Create mastery lookup map
     const masteryMap = new Map(
-      masteryRecords.map(m => [m.question_id, m])
+      masteryRecords.map((m: any) => [m.question_id, m])
     );
 
     // Format the response with mastery progress
-    const formattedAnswers = questions.map((question) => {
-      const mastery = masteryMap.get(question.id);
+    const formattedAnswers = questions.map((question: any) => {
+      const mastery: any = masteryMap.get(question.id);
       return {
         question: {
           id: question.id,
@@ -106,7 +106,7 @@ export async function GET(req: Request) {
     });
 
     // Sort by mastery progress (closest to mastery first)
-    formattedAnswers.sort((a, b) => {
+    formattedAnswers.sort((a: any, b: any) => {
       return b.masteryProgress.consecutive_correct - a.masteryProgress.consecutive_correct;
     });
 
