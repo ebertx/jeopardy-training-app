@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model jeopardy_questions {
+  id                  Int                 @id @default(autoincrement())
+  round               Int?
+  clue_value          Int?
+  daily_double_value  Int?
+  category            String?             @db.VarChar(500)
+  comments            String?
+  answer              String?
+  question            String?
+  air_date            DateTime?           @db.Date
+  notes               String?
+  created_at          DateTime?           @default(now()) @db.Timestamp(6)
+  confidence_score    Float?
+  classified_at       DateTime?           @db.Timestamp(6)
+  classifier_category String?
+  archived            Boolean             @default(false)
+  archived_reason     String?
+  archived_at         DateTime?           @db.Timestamp(6)
+  question_attempts   question_attempts[]
+  question_mastery    question_mastery[]
+
+  @@index([archived])
+  @@index([archived, air_date(sort: Desc)])
+  @@index([archived, classifier_category, air_date(sort: Desc)])
+}
+
+model users {
+  id                    Int                      @id @default(autoincrement())
+  username              String                   @unique @db.VarChar(50)
+  email                 String                   @unique @db.VarChar(255)
+  password_hash         String                   @db.VarChar(255)
+  created_at            DateTime                 @default(now()) @db.Timestamp(6)
+  quiz_sessions         quiz_sessions[]
+  question_attempts     question_attempts[]
+  question_mastery      question_mastery[]
+  study_recommendations study_recommendations[]
+}
+
+model quiz_sessions {
+  id                Int                 @id @default(autoincrement())
+  user_id           Int
+  started_at        DateTime            @default(now()) @db.Timestamp(6)
+  completed_at      DateTime?           @db.Timestamp(6)
+  category_filter   String?             @db.VarChar(255)
+  user              users               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  question_attempts question_attempts[]
+
+  @@index([user_id])
+}
+
+model question_attempts {
+  id          Int                @id @default(autoincrement())
+  session_id  Int
+  question_id Int
+  user_id     Int
+  correct     Boolean
+  answered_at DateTime           @default(now()) @db.Timestamp(6)
+  session     quiz_sessions      @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  question    jeopardy_questions @relation(fields: [question_id], references: [id])
+  user        users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([question_id])
+  @@index([session_id])
+}
+
+model question_mastery {
+  id                 Int                @id @default(autoincrement())
+  user_id            Int
+  question_id        Int
+  consecutive_correct Int               @default(0)
+  mastered           Boolean            @default(false)
+  mastered_at        DateTime?          @db.Timestamp(6)
+  last_attempt_at    DateTime           @default(now()) @db.Timestamp(6)
+  user               users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  question           jeopardy_questions @relation(fields: [question_id], references: [id])
+
+  @@unique([user_id, question_id])
+  @@index([user_id])
+  @@index([question_id])
+  @@index([mastered])
+}
+
+model study_recommendations {
+  id                Int      @id @default(autoincrement())
+  user_id           Int
+  generated_at      DateTime @default(now()) @db.Timestamp(6)
+  days_analyzed     Int
+  analysis          String   @db.Text
+  recommendations   Json     @db.JsonB
+  question_count    Int
+  time_period_start DateTime @db.Timestamp(6)
+  time_period_end   DateTime @db.Timestamp(6)
+  user              users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([generated_at])
+}
