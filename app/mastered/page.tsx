@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Navigation from "../components/Navigation";
 
 interface MasteredQuestion {
   id: number;
@@ -164,26 +165,7 @@ export default function MasteredPage() {
   if (!question) {
     return (
       <div className="min-h-screen bg-gray-100">
-        {/* Header */}
-        <div className="bg-jeopardy-blue text-white p-4">
-          <div className="max-w-6xl mx-auto flex justify-between items-center">
-            <h1 className="text-2xl font-bold">Mastered Questions Review</h1>
-            <div className="flex items-center gap-6">
-              <Link href="/quiz" className="hover:underline">
-                Quiz
-              </Link>
-              <Link href="/review" className="hover:underline">
-                Review
-              </Link>
-              <Link href="/study" className="hover:underline">
-                Study
-              </Link>
-              <Link href="/dashboard" className="hover:underline">
-                Dashboard
-              </Link>
-            </div>
-          </div>
-        </div>
+        <Navigation title="Mastered Questions Review" username={session?.user?.username} />
 
         <div className="max-w-4xl mx-auto p-8">
           <div className="bg-white p-12 rounded-lg shadow text-center">
@@ -209,33 +191,16 @@ export default function MasteredPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <div className="bg-green-700 text-white p-4">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Mastered Questions Review</h1>
-          <div className="flex items-center gap-6">
-            <div className="text-sm">
-              {question.total_mastered} mastered question{question.total_mastered !== 1 ? "s" : ""}
-            </div>
-            <Link href="/quiz" className="hover:underline">
-              Quiz
-            </Link>
-            <Link href="/review" className="hover:underline">
-              Review
-            </Link>
-            <Link href="/study" className="hover:underline">
-              Study
-            </Link>
-            <Link href="/dashboard" className="hover:underline">
-              Dashboard
-            </Link>
-          </div>
-        </div>
-      </div>
+      <Navigation title="Mastered Questions Review" username={session?.user?.username} bgColor="bg-green-700" />
 
-      {/* Category Filter */}
+      {/* Stats & Category Filter */}
       <div className="bg-white shadow-sm p-4">
         <div className="max-w-6xl mx-auto">
+          <div className="mb-4 text-center">
+            <span className="text-sm font-medium text-gray-700">
+              {question.total_mastered} mastered question{question.total_mastered !== 1 ? "s" : ""}
+            </span>
+          </div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Category Filter:
           </label>
