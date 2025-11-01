@@ -156,7 +156,7 @@ Return your response as JSON in this exact format:
         user_id: userId,
         days_analyzed: days,
         analysis: llmResponse.analysis,
-        recommendations: llmResponse.topics,
+        recommendations: llmResponse.topics as any,
         question_count: incorrectAttempts.length,
         time_period_start: timePeriodStart,
         time_period_end: now,
