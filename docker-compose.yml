@@ -12,7 +12,7 @@ services:
     labels:
       # Traefik labels for reverse proxy
       - "traefik.enable=true"
-      - "traefik.http.routers.jeopardy.rule=Host(`jeopardy.yourdomain.com`)"
+      - "traefik.http.routers.jeopardy.rule=Host(`jeopardy.ebertx.com`)"
       - "traefik.http.routers.jeopardy.entrypoints=websecure"
       - "traefik.http.routers.jeopardy.tls=true"
       - "traefik.http.routers.jeopardy.tls.certresolver=letsencrypt"
