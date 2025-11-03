@@ -1,6 +1,13 @@
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resend: Resend | null = null;
+
+function getResend(): Resend {
+  if (!resend) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+}
 
 export async function sendNewUserNotificationToAdmin(
   username: string,
@@ -13,7 +20,7 @@ export async function sendNewUserNotificationToAdmin(
   }
 
   try {
-    await resend.emails.send({
+    await getResend().emails.send({
       from: process.env.EMAIL_FROM || 'Jeopardy Training <noreply@jeopardy.ebertx.com>',
       to: process.env.ADMIN_EMAIL,
       subject: 'New User Registration Pending Approval',
@@ -56,7 +63,7 @@ export async function sendApprovalNotificationToUser(
   }
 
   try {
-    await resend.emails.send({
+    await getResend().emails.send({
       from: process.env.EMAIL_FROM || 'Jeopardy Training <noreply@jeopardy.ebertx.com>',
       to: email,
       subject: 'Your Account Has Been Approved!',
