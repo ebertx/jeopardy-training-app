@@ -165,7 +165,7 @@ export default function MasteredPage() {
   if (!question) {
     return (
       <div className="min-h-screen bg-gray-100">
-        <Navigation title="Mastered Questions Review" username={session?.user?.username} />
+        <Navigation title="Mastered Questions Review" username={session?.user?.username} userRole={session?.user?.role} />
 
         <div className="max-w-4xl mx-auto p-8">
           <div className="bg-white p-12 rounded-lg shadow text-center">

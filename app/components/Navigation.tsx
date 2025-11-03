@@ -7,10 +7,11 @@ import { useState } from 'react';
 interface NavigationProps {
   title: string;
   username?: string;
+  userRole?: string;
   bgColor?: string;
 }
 
-export default function Navigation({ title, username, bgColor = 'bg-jeopardy-blue' }: NavigationProps) {
+export default function Navigation({ title, username, userRole, bgColor = 'bg-jeopardy-blue' }: NavigationProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   return (
@@ -39,6 +40,9 @@ export default function Navigation({ title, username, bgColor = 'bg-jeopardy-blu
             <Link href="/study" className="hover:underline">Study</Link>
             <Link href="/dashboard" className="hover:underline">Dashboard</Link>
             <Link href="/settings" className="hover:underline">Settings</Link>
+            {userRole === 'admin' && (
+              <Link href="/admin" className="hover:underline text-yellow-300 font-semibold">Admin</Link>
+            )}
             <button onClick={() => signOut()} className="hover:underline">Logout</button>
           </div>
         </div>
@@ -53,6 +57,9 @@ export default function Navigation({ title, username, bgColor = 'bg-jeopardy-blu
             <Link href="/study" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Study</Link>
             <Link href="/dashboard" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Dashboard</Link>
             <Link href="/settings" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Settings</Link>
+            {userRole === 'admin' && (
+              <Link href="/admin" className="hover:underline py-2 text-yellow-300 font-semibold" onClick={() => setIsMenuOpen(false)}>Admin</Link>
+            )}
             <button onClick={() => signOut()} className="hover:underline py-2 text-left">Logout</button>
           </div>
         )}
