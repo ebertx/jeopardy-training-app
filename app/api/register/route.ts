@@ -43,7 +43,11 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(
-      { message: "User created successfully", userId: user.id },
+      {
+        message: "Registration successful! Your account is pending approval. You'll be able to log in once an administrator approves your account.",
+        userId: user.id,
+        pendingApproval: true
+      },
       { status: 201 }
     );
   } catch (error) {
