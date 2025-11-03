@@ -32,6 +32,13 @@ export default function ReviewPage() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
+  // Review session state
+  const [inSession, setInSession] = useState(false);
+  const [sessionQuestions, setSessionQuestions] = useState<WrongAnswer[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/login");
@@ -97,10 +104,189 @@ export default function ReviewPage() {
     }
   };
 
+  const startReviewSession = () => {
+    setSessionQuestions([...wrongAnswers]);
+    setCurrentIndex(0);
+    setRevealed(false);
+    setInSession(true);
+  };
+
+  const endReviewSession = () => {
+    setInSession(false);
+    setSessionQuestions([]);
+    setCurrentIndex(0);
+    setRevealed(false);
+    fetchWrongAnswers(); // Refresh to show updated progress
+  };
+
+  const handleSessionSubmit = async (correct: boolean) => {
+    if (submitting) return;
+
+    setSubmitting(true);
+
+    try {
+      await fetch("/api/quiz/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          questionId: sessionQuestions[currentIndex].question.id,
+          correct,
+        }),
+      });
+
+      // Move to next question or end session
+      if (currentIndex + 1 < sessionQuestions.length) {
+        setCurrentIndex(currentIndex + 1);
+        setRevealed(false);
+      } else {
+        // Session complete
+        alert("Review session complete!");
+        endReviewSession();
+      }
+    } catch (error) {
+      console.error("Error submitting answer:", error);
+      alert("Error submitting answer");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (status === "loading" || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="text-xl">Loading...</div>
+      </div>
+    );
+  }
+
+  // Review Session UI
+  if (inSession && sessionQuestions.length > 0) {
+    const currentQuestion = sessionQuestions[currentIndex].question;
+
+    return (
+      <div className="min-h-screen bg-gray-100">
+        {/* Header */}
+        <div className="bg-jeopardy-blue text-white p-4">
+          <div className="max-w-4xl mx-auto flex justify-between items-center">
+            <h1 className="text-2xl font-bold">Review Session</h1>
+            <button
+              onClick={endReviewSession}
+              className="px-4 py-2 bg-white text-jeopardy-blue rounded hover:bg-gray-100 transition-colors"
+            >
+              End Session
+            </button>
+          </div>
+        </div>
+
+        {/* Progress */}
+        <div className="bg-white shadow-sm p-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex justify-between text-sm text-gray-600">
+              <span>Question {currentIndex + 1} of {sessionQuestions.length}</span>
+              <span>{Math.round(((currentIndex) / sessionQuestions.length) * 100)}% Complete</span>
+            </div>
+            <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
+              <div
+                className="bg-jeopardy-blue h-2 rounded-full transition-all"
+                style={{ width: `${(currentIndex / sessionQuestions.length) * 100}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        {/* Question Card */}
+        <div className="max-w-4xl mx-auto p-8">
+          <div className="bg-white rounded-lg shadow-lg p-8">
+            {/* Category Badge */}
+            <div className="flex items-center gap-3 mb-6">
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full">
+                {currentQuestion.classifier_category}
+              </span>
+              {currentQuestion.clue_value && (
+                <span className="text-lg font-bold text-jeopardy-gold">
+                  ${currentQuestion.clue_value}
+                </span>
+              )}
+            </div>
+
+            {/* Clue */}
+            <div className="mb-8 p-6 bg-jeopardy-blue text-white rounded-lg">
+              <div className="text-3xl font-bold leading-relaxed">
+                {currentQuestion.answer}
+              </div>
+            </div>
+
+            {/* Revealed Answer */}
+            {revealed && (
+              <div className="mb-6 p-6 bg-green-50 rounded-lg border-2 border-green-200">
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Correct Response:
+                </p>
+                <div className="text-xl font-bold text-green-800">
+                  {currentQuestion.question}
+                </div>
+              </div>
+            )}
+
+            {/* Metadata */}
+            {revealed && (
+              <div className="bg-gray-50 p-4 rounded-lg mb-6">
+                <div className="flex items-center gap-4 text-gray-700 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-jeopardy-blue text-sm">Original Category:</span>
+                    <span className="font-medium">{currentQuestion.category}</span>
+                  </div>
+                  {currentQuestion.air_date && (
+                    <>
+                      <span className="text-gray-400">•</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-jeopardy-blue text-sm">Aired:</span>
+                        <span className="font-medium">
+                          {new Date(currentQuestion.air_date).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric"
+                          })}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-4 justify-center">
+              {!revealed ? (
+                <button
+                  onClick={() => setRevealed(true)}
+                  className="px-8 py-4 bg-jeopardy-blue text-white text-xl font-bold rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Reveal Answer
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => handleSessionSubmit(true)}
+                    disabled={submitting}
+                    className="px-8 py-4 bg-green-600 text-white text-xl font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    ✓ Correct
+                  </button>
+                  <button
+                    onClick={() => handleSessionSubmit(false)}
+                    disabled={submitting}
+                    className="px-8 py-4 bg-red-600 text-white text-xl font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    ✗ Incorrect
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -150,10 +336,16 @@ export default function ReviewPage() {
           </div>
         ) : (
           <>
-            <div className="mb-6">
+            <div className="mb-6 flex justify-between items-center">
               <h2 className="text-xl font-semibold text-gray-800">
                 Found {wrongAnswers.length} question{wrongAnswers.length !== 1 ? "s" : ""} to review
               </h2>
+              <button
+                onClick={startReviewSession}
+                className="px-6 py-3 bg-jeopardy-blue text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Start Review Session
+              </button>
             </div>
 
             <div className="space-y-4">
