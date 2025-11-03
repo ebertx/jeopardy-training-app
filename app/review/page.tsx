@@ -211,6 +211,31 @@ export default function ReviewPage() {
               )}
             </div>
 
+            {/* Metadata */}
+            <div className="bg-gray-50 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-gray-700 text-sm sm:text-base">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Original Category:</span>
+                  <span className="font-medium break-words">{currentQuestion.category}</span>
+                </div>
+                {currentQuestion.air_date && (
+                  <>
+                    <span className="text-gray-400 hidden sm:inline">•</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Aired:</span>
+                      <span className="font-medium">
+                        {new Date(currentQuestion.air_date).toLocaleDateString("en-US", {
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric"
+                        })}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Clue */}
             <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-jeopardy-blue text-white rounded-lg">
               <div className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold leading-relaxed break-words">
@@ -226,33 +251,6 @@ export default function ReviewPage() {
                 </p>
                 <div className="text-base sm:text-lg md:text-xl font-bold text-green-800 break-words">
                   {currentQuestion.question}
-                </div>
-              </div>
-            )}
-
-            {/* Metadata */}
-            {revealed && (
-              <div className="bg-gray-50 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-gray-700 text-sm sm:text-base">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Original Category:</span>
-                    <span className="font-medium break-words">{currentQuestion.category}</span>
-                  </div>
-                  {currentQuestion.air_date && (
-                    <>
-                      <span className="text-gray-400 hidden sm:inline">•</span>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Aired:</span>
-                        <span className="font-medium">
-                          {new Date(currentQuestion.air_date).toLocaleDateString("en-US", {
-                            year: "numeric",
-                            month: "long",
-                            day: "numeric"
-                          })}
-                        </span>
-                      </div>
-                    </>
-                  )}
                 </div>
               </div>
             )}
