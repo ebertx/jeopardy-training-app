@@ -33,10 +33,16 @@ export const authOptions: NextAuthOptions = {
           return null;
         }
 
+        // Check if user is approved
+        if (!user.approved) {
+          throw new Error("Your account is pending approval. You'll receive an email once approved.");
+        }
+
         return {
           id: user.id.toString(),
           email: user.email,
           name: user.username,
+          role: user.role,
         };
       }
     })
@@ -52,6 +58,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.username = user.name;
+        token.role = user.role;
       }
       return token;
     },
@@ -59,6 +66,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.id as string;
         session.user.username = token.username as string;
+        session.user.role = token.role as string;
       }
       return session;
     }
