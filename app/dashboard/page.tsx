@@ -95,7 +95,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navigation title="Performance Dashboard" username={session?.user?.username} />
+      <Navigation title="Performance Dashboard" username={session?.user?.username} userRole={session?.user?.role} />
 
       <div className="max-w-6xl mx-auto p-8">
         {/* Overall Stats */}

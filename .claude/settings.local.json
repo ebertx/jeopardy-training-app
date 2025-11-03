@@ -23,7 +23,8 @@
       "Bash(git commit -m \"$(cat <<''EOF''\nAdd automated deployment configuration\n\nDeployment setup for Unraid with Traefik:\n- Dockerfile: Multi-stage build for optimized production image\n- docker-compose.yml: Container orchestration with Traefik labels\n- GitHub Actions: Automated CI/CD pipeline to GHCR\n- Watchtower integration: Auto-updates on new image push\n- Comprehensive deployment documentation\n\nFeatures:\n- Push to main triggers automatic deployment\n- Tailscale-only access for privacy\n- SSL via Let''s Encrypt through Traefik\n- Reusable pattern for future web apps\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git commit:*)",
       "WebFetch(domain:github.com)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(lsof:*)"
     ],
     "deny": [],
     "ask": []

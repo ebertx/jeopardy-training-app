@@ -293,7 +293,7 @@ export default function ReviewPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navigation title="Review Wrong Answers" username={session?.user?.username} />
+      <Navigation title="Review Wrong Answers" username={session?.user?.username} userRole={session?.user?.role} />
 
       {/* Category Filter */}
       <div className="bg-white shadow-sm p-4">

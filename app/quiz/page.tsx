@@ -232,7 +232,7 @@ export default function QuizPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navigation title="Jeopardy! Training" username={session?.user?.username} />
+      <Navigation title="Jeopardy! Training" username={session?.user?.username} userRole={session?.user?.role} />
 
       {/* Session Stats & Category Filter */}
       <div className="bg-white shadow-sm p-4">

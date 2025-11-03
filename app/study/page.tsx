@@ -155,7 +155,7 @@ export default function StudyPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navigation title="Study Recommendations" username={session?.user?.username} />
+      <Navigation title="Study Recommendations" username={session?.user?.username} userRole={session?.user?.role} />
 
       <div className="max-w-6xl mx-auto p-8">
         {/* Generation Form */}

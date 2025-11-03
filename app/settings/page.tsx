@@ -88,7 +88,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <Navigation title="Settings & Archived Questions" username={session?.user?.username} />
+      <Navigation title="Settings & Archived Questions" username={session?.user?.username} userRole={session?.user?.role} />
 
       <div className="max-w-6xl mx-auto p-8">
         {/* Archived Questions Section */}
