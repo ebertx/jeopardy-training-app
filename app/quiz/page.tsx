@@ -235,20 +235,20 @@ export default function QuizPage() {
       <Navigation title="Jeopardy! Training" username={session?.user?.username} userRole={session?.user?.role} />
 
       {/* Session Stats & Category Filter */}
-      <div className="bg-white shadow-sm p-4">
+      <div className="bg-white shadow-sm p-3 sm:p-4">
         <div className="max-w-6xl mx-auto">
-          <div className="mb-4 text-center">
-            <span className="text-sm font-medium text-gray-700">
+          <div className="mb-3 sm:mb-4 text-center">
+            <span className="text-xs sm:text-sm font-medium text-gray-700">
               Session: {stats.correct}/{stats.total} ({accuracy}%)
             </span>
           </div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
             Category Filter:
           </label>
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-jeopardy-blue"
+            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-jeopardy-blue"
           >
             <option value="all">All Categories</option>
             {categories.map((cat) => (
@@ -261,56 +261,56 @@ export default function QuizPage() {
       </div>
 
       {/* Question Card */}
-      <div className="max-w-4xl mx-auto p-8">
-        <div className="bg-jeopardy-blue text-jeopardy-gold p-8 rounded-lg shadow-xl">
-          <div className="text-center mb-6">
-            <div className="text-sm opacity-80 mb-2">
+      <div className="max-w-4xl mx-auto p-3 sm:p-4 md:p-6 lg:p-8">
+        <div className="bg-jeopardy-blue text-jeopardy-gold p-4 sm:p-6 md:p-8 rounded-lg shadow-xl">
+          <div className="text-center mb-4 sm:mb-6">
+            <div className="text-xs sm:text-sm opacity-80 mb-2">
               {question.classifier_category}
               {question.clue_value && ` • $${question.clue_value}`}
             </div>
-            <div className="text-3xl font-bold leading-relaxed">
+            <div className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold leading-relaxed">
               {question.answer}
             </div>
           </div>
 
           {!showAnswer ? (
-            <div className="text-center mt-8">
+            <div className="text-center mt-6 sm:mt-8">
               <button
                 onClick={() => setShowAnswer(true)}
-                className="px-8 py-3 bg-jeopardy-gold text-jeopardy-blue font-bold text-lg rounded-lg hover:bg-yellow-400 transition-colors"
+                className="px-6 py-2 sm:px-8 sm:py-3 bg-jeopardy-gold text-jeopardy-blue font-bold text-base sm:text-lg rounded-lg hover:bg-yellow-400 transition-colors"
               >
                 Show Answer
               </button>
-              <div className="text-white text-sm mt-4 opacity-70">
+              <div className="text-white text-xs sm:text-sm mt-3 sm:mt-4 opacity-70">
                 Press Space to reveal
               </div>
             </div>
           ) : (
-            <div className="mt-8">
-              <div className="bg-white text-jeopardy-blue p-6 rounded-lg text-center mb-6">
-                <div className="text-xl font-bold">{question.question}</div>
+            <div className="mt-6 sm:mt-8">
+              <div className="bg-white text-jeopardy-blue p-4 sm:p-6 rounded-lg text-center mb-4 sm:mb-6">
+                <div className="text-base sm:text-lg md:text-xl font-bold break-words">{question.question}</div>
               </div>
 
-              <div className="flex gap-4 justify-center flex-wrap">
+              <div className="flex gap-2 sm:gap-4 justify-center flex-wrap">
                 <button
                   onClick={() => handleAnswer(false)}
-                  className="px-8 py-3 bg-red-600 text-white font-bold text-lg rounded-lg hover:bg-red-700 transition-colors"
+                  className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-2 sm:py-3 bg-red-600 text-white font-bold text-sm sm:text-base md:text-lg rounded-lg hover:bg-red-700 transition-colors"
                 >
                   Incorrect ✗
                 </button>
                 <button
                   onClick={() => handleAnswer(true)}
-                  className="px-8 py-3 bg-green-600 text-white font-bold text-lg rounded-lg hover:bg-green-700 transition-colors"
+                  className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-2 sm:py-3 bg-green-600 text-white font-bold text-sm sm:text-base md:text-lg rounded-lg hover:bg-green-700 transition-colors"
                 >
                   Correct ✓
                 </button>
               </div>
 
-              <div className="text-white text-sm mt-4 text-center opacity-70">
+              <div className="text-white text-xs sm:text-sm mt-3 sm:mt-4 text-center opacity-70">
                 Press ← for Incorrect | → for Correct
               </div>
 
-              <div className="mt-4 text-center">
+              <div className="mt-3 sm:mt-4 text-center">
                 <button
                   onClick={handleArchive}
                   className="px-3 py-1 text-xs text-gray-300 hover:text-white underline transition-colors"
@@ -323,18 +323,18 @@ export default function QuizPage() {
         </div>
 
         {/* Additional Info */}
-        <div className="mt-6 bg-white p-4 rounded-lg shadow-md">
-          <div className="flex justify-center items-center gap-6 text-gray-800">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-jeopardy-blue">Original Category:</span>
-              <span className="text-lg font-medium">{question.category}</span>
+        <div className="mt-4 sm:mt-6 bg-white p-3 sm:p-4 rounded-lg shadow-md">
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-2 sm:gap-4 md:gap-6 text-gray-800 text-sm sm:text-base">
+            <div className="flex items-center gap-2 flex-wrap justify-center">
+              <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Original Category:</span>
+              <span className="text-sm sm:text-base md:text-lg font-medium break-words text-center">{question.category}</span>
             </div>
             {question.air_date && (
               <>
-                <span className="text-gray-400">•</span>
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-jeopardy-blue">Aired:</span>
-                  <span className="text-lg font-medium">
+                <span className="text-gray-400 hidden sm:inline">•</span>
+                <div className="flex items-center gap-2 flex-wrap justify-center">
+                  <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Aired:</span>
+                  <span className="text-sm sm:text-base md:text-lg font-medium">
                     {new Date(question.air_date).toLocaleDateString("en-US", {
                       year: "numeric",
                       month: "long",
