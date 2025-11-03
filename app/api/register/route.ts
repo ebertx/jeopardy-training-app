@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { sendNewUserNotificationToAdmin } from "@/lib/email";
 
 export async function POST(req: Request) {
   try {
@@ -41,6 +42,11 @@ export async function POST(req: Request) {
         password_hash,
       },
     });
+
+    // Send notification to admin (don't wait for it)
+    sendNewUserNotificationToAdmin(username, email, user.id).catch((err) =>
+      console.error('Email notification failed:', err)
+    );
 
     return NextResponse.json(
       {
