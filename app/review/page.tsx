@@ -168,12 +168,12 @@ export default function ReviewPage() {
     return (
       <div className="min-h-screen bg-gray-100">
         {/* Header */}
-        <div className="bg-jeopardy-blue text-white p-4">
-          <div className="max-w-4xl mx-auto flex justify-between items-center">
-            <h1 className="text-2xl font-bold">Review Session</h1>
+        <div className="bg-jeopardy-blue text-white p-3 sm:p-4">
+          <div className="max-w-4xl mx-auto flex justify-between items-center gap-2">
+            <h1 className="text-lg sm:text-xl md:text-2xl font-bold">Review Session</h1>
             <button
               onClick={endReviewSession}
-              className="px-4 py-2 bg-white text-jeopardy-blue rounded hover:bg-gray-100 transition-colors"
+              className="px-3 py-1.5 sm:px-4 sm:py-2 text-sm sm:text-base bg-white text-jeopardy-blue rounded hover:bg-gray-100 transition-colors whitespace-nowrap"
             >
               End Session
             </button>
@@ -181,9 +181,9 @@ export default function ReviewPage() {
         </div>
 
         {/* Progress */}
-        <div className="bg-white shadow-sm p-4">
+        <div className="bg-white shadow-sm p-3 sm:p-4">
           <div className="max-w-4xl mx-auto">
-            <div className="flex justify-between text-sm text-gray-600">
+            <div className="flex justify-between text-xs sm:text-sm text-gray-600">
               <span>Question {currentIndex + 1} of {sessionQuestions.length}</span>
               <span>{Math.round(((currentIndex) / sessionQuestions.length) * 100)}% Complete</span>
             </div>
@@ -197,34 +197,34 @@ export default function ReviewPage() {
         </div>
 
         {/* Question Card */}
-        <div className="max-w-4xl mx-auto p-8">
-          <div className="bg-white rounded-lg shadow-lg p-8">
+        <div className="max-w-4xl mx-auto p-3 sm:p-4 md:p-6 lg:p-8">
+          <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 md:p-8">
             {/* Category Badge */}
-            <div className="flex items-center gap-3 mb-6">
-              <span className="px-3 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded-full">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
+              <span className="px-2.5 py-1 sm:px-3 bg-blue-100 text-blue-800 text-xs sm:text-sm font-semibold rounded-full">
                 {currentQuestion.classifier_category}
               </span>
               {currentQuestion.clue_value && (
-                <span className="text-lg font-bold text-jeopardy-gold">
+                <span className="text-base sm:text-lg font-bold text-jeopardy-gold">
                   ${currentQuestion.clue_value}
                 </span>
               )}
             </div>
 
             {/* Clue */}
-            <div className="mb-8 p-6 bg-jeopardy-blue text-white rounded-lg">
-              <div className="text-3xl font-bold leading-relaxed">
+            <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-jeopardy-blue text-white rounded-lg">
+              <div className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold leading-relaxed break-words">
                 {currentQuestion.answer}
               </div>
             </div>
 
             {/* Revealed Answer */}
             {revealed && (
-              <div className="mb-6 p-6 bg-green-50 rounded-lg border-2 border-green-200">
-                <p className="text-sm font-medium text-gray-700 mb-2">
+              <div className="mb-4 sm:mb-6 p-4 sm:p-6 bg-green-50 rounded-lg border-2 border-green-200">
+                <p className="text-xs sm:text-sm font-medium text-gray-700 mb-2">
                   Correct Response:
                 </p>
-                <div className="text-xl font-bold text-green-800">
+                <div className="text-base sm:text-lg md:text-xl font-bold text-green-800 break-words">
                   {currentQuestion.question}
                 </div>
               </div>
@@ -232,17 +232,17 @@ export default function ReviewPage() {
 
             {/* Metadata */}
             {revealed && (
-              <div className="bg-gray-50 p-4 rounded-lg mb-6">
-                <div className="flex items-center gap-4 text-gray-700 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-jeopardy-blue text-sm">Original Category:</span>
-                    <span className="font-medium">{currentQuestion.category}</span>
+              <div className="bg-gray-50 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-gray-700 text-sm sm:text-base">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Original Category:</span>
+                    <span className="font-medium break-words">{currentQuestion.category}</span>
                   </div>
                   {currentQuestion.air_date && (
                     <>
-                      <span className="text-gray-400">•</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-jeopardy-blue text-sm">Aired:</span>
+                      <span className="text-gray-400 hidden sm:inline">•</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Aired:</span>
                         <span className="font-medium">
                           {new Date(currentQuestion.air_date).toLocaleDateString("en-US", {
                             year: "numeric",
@@ -258,11 +258,11 @@ export default function ReviewPage() {
             )}
 
             {/* Action Buttons */}
-            <div className="flex gap-4 justify-center">
+            <div className="flex gap-2 sm:gap-4 justify-center flex-wrap">
               {!revealed ? (
                 <button
                   onClick={() => setRevealed(true)}
-                  className="px-8 py-4 bg-jeopardy-blue text-white text-xl font-bold rounded-lg hover:bg-blue-700 transition-colors"
+                  className="px-6 py-3 sm:px-8 sm:py-4 bg-jeopardy-blue text-white text-base sm:text-lg md:text-xl font-bold rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   Reveal Answer
                 </button>
@@ -271,14 +271,14 @@ export default function ReviewPage() {
                   <button
                     onClick={() => handleSessionSubmit(true)}
                     disabled={submitting}
-                    className="px-8 py-4 bg-green-600 text-white text-xl font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-3 sm:py-4 bg-green-600 text-white text-base sm:text-lg md:text-xl font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     ✓ Correct
                   </button>
                   <button
                     onClick={() => handleSessionSubmit(false)}
                     disabled={submitting}
-                    className="px-8 py-4 bg-red-600 text-white text-xl font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-3 sm:py-4 bg-red-600 text-white text-base sm:text-lg md:text-xl font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     ✗ Incorrect
                   </button>
@@ -296,15 +296,15 @@ export default function ReviewPage() {
       <Navigation title="Review Wrong Answers" username={session?.user?.username} userRole={session?.user?.role} />
 
       {/* Category Filter */}
-      <div className="bg-white shadow-sm p-4">
+      <div className="bg-white shadow-sm p-3 sm:p-4">
         <div className="max-w-6xl mx-auto">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
             Filter by Category:
           </label>
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-jeopardy-blue"
+            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-jeopardy-blue"
           >
             <option value="all">All Categories</option>
             {categories.map((cat) => (
@@ -316,33 +316,33 @@ export default function ReviewPage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto p-8">
+      <div className="max-w-6xl mx-auto p-3 sm:p-4 md:p-6 lg:p-8">
         {wrongAnswers.length === 0 ? (
-          <div className="bg-white p-12 rounded-lg shadow text-center">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">
+          <div className="bg-white p-6 sm:p-8 md:p-12 rounded-lg shadow text-center">
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4">
               No Wrong Answers Found!
             </h2>
-            <p className="text-gray-600 mb-6">
+            <p className="text-sm sm:text-base text-gray-600 mb-6">
               {selectedCategory === "all"
                 ? "You haven't answered any questions incorrectly yet, or you haven't started quizzing."
                 : `You haven't answered any questions incorrectly in the ${selectedCategory} category.`}
             </p>
             <Link
               href="/quiz"
-              className="inline-block px-8 py-3 bg-jeopardy-blue text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
+              className="inline-block px-6 py-2 sm:px-8 sm:py-3 text-sm sm:text-base bg-jeopardy-blue text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
             >
               Start Quiz
             </Link>
           </div>
         ) : (
           <>
-            <div className="mb-6 flex justify-between items-center">
-              <h2 className="text-xl font-semibold text-gray-800">
+            <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+              <h2 className="text-base sm:text-lg md:text-xl font-semibold text-gray-800">
                 Found {wrongAnswers.length} question{wrongAnswers.length !== 1 ? "s" : ""} to review
               </h2>
               <button
                 onClick={startReviewSession}
-                className="px-6 py-3 bg-jeopardy-blue text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
+                className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base bg-jeopardy-blue text-white font-bold rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
                 Start Review Session
               </button>
@@ -364,56 +364,56 @@ export default function ReviewPage() {
                     className="bg-white rounded-lg shadow hover:shadow-md transition-shadow"
                   >
                     <div
-                      className="p-6 cursor-pointer"
+                      className="p-4 sm:p-6 cursor-pointer"
                       onClick={() =>
                         setExpandedId(expandedId === item.question.id ? null : item.question.id)
                       }
                     >
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
+                            <span className="px-2 sm:px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
                               {item.question.classifier_category}
                             </span>
                             {item.question.clue_value && (
-                              <span className="text-sm text-gray-500">
+                              <span className="text-xs sm:text-sm text-gray-500">
                                 ${item.question.clue_value}
                               </span>
                             )}
-                            <span className={`px-3 py-1 ${badgeColor} text-xs font-semibold rounded-full`}>
+                            <span className={`px-2 sm:px-3 py-1 ${badgeColor} text-xs font-semibold rounded-full whitespace-nowrap`}>
                               Progress: {progress}/{required} ✓
                             </span>
                           </div>
-                          <p className="text-lg font-medium text-gray-900">
+                          <p className="text-sm sm:text-base md:text-lg font-medium text-gray-900 break-words">
                             {item.question.answer}
                           </p>
                         </div>
-                        <button className="text-gray-400 hover:text-gray-600">
+                        <button className="text-gray-400 hover:text-gray-600 text-xl flex-shrink-0 ml-2">
                           {expandedId === item.question.id ? "−" : "+"}
                         </button>
                       </div>
 
                       {expandedId === item.question.id && (
-                      <div className="mt-4 pt-4 border-t border-gray-200">
-                        <div className="bg-green-50 p-4 rounded-lg mb-4">
-                          <p className="text-sm font-medium text-gray-700 mb-1">
+                      <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-gray-200">
+                        <div className="bg-green-50 p-3 sm:p-4 rounded-lg mb-3 sm:mb-4">
+                          <p className="text-xs sm:text-sm font-medium text-gray-700 mb-1">
                             Correct Response:
                           </p>
-                          <p className="text-lg font-semibold text-green-800">
+                          <p className="text-sm sm:text-base md:text-lg font-semibold text-green-800 break-words">
                             {item.question.question}
                           </p>
                         </div>
                         <div className="bg-gray-50 p-3 rounded-lg mt-3">
-                          <div className="flex items-center gap-4 text-gray-700">
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-jeopardy-blue text-sm">Original Category:</span>
-                              <span className="font-medium">{item.question.category}</span>
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-gray-700 text-xs sm:text-sm">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-jeopardy-blue">Original Category:</span>
+                              <span className="font-medium break-words">{item.question.category}</span>
                             </div>
                             {item.question.air_date && (
                               <>
-                                <span className="text-gray-400">•</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-jeopardy-blue text-sm">Aired:</span>
+                                <span className="text-gray-400 hidden sm:inline">•</span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-semibold text-jeopardy-blue">Aired:</span>
                                   <span className="font-medium">
                                     {new Date(item.question.air_date).toLocaleDateString("en-US", {
                                       year: "numeric",
@@ -426,7 +426,7 @@ export default function ReviewPage() {
                             )}
                           </div>
                         </div>
-                        <div className="mt-4 text-center">
+                        <div className="mt-3 sm:mt-4 text-center">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
