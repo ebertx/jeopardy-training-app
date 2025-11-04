@@ -93,6 +93,12 @@ export default function DashboardPage() {
     return "#ef4444"; // red - Needs Work
   };
 
+  // Add color to chart data
+  const chartData = stats.categoryBreakdown.map(cat => ({
+    ...cat,
+    fill: getAccuracyColor(cat.accuracy)
+  }));
+
   // Custom legend content for proficiency levels
   const renderLegend = () => (
     <div className="flex justify-center gap-6 mb-4">
@@ -140,7 +146,7 @@ export default function DashboardPage() {
             </h2>
             {renderLegend()}
             <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={stats.categoryBreakdown}>
+              <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="category"
@@ -153,8 +159,8 @@ export default function DashboardPage() {
                 <YAxis domain={[0, 100]} label={{ value: 'Accuracy %', angle: -90, position: 'insideLeft' }} />
                 <Tooltip />
                 <Bar dataKey="accuracy" name="Accuracy %">
-                  {stats.categoryBreakdown.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={getAccuracyColor(entry.accuracy)} />
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${entry.category}`} fill={entry.fill} />
                   ))}
                 </Bar>
               </BarChart>
