@@ -86,12 +86,30 @@ export default function DashboardPage() {
     );
   }
 
-  // Get color based on accuracy
+  // Get color based on accuracy/proficiency level
   const getAccuracyColor = (accuracy: number) => {
-    if (accuracy >= 75) return "#10b981"; // green
-    if (accuracy >= 50) return "#f59e0b"; // yellow
-    return "#ef4444"; // red
+    if (accuracy >= 75) return "#10b981"; // green - Strong
+    if (accuracy >= 50) return "#f59e0b"; // yellow/amber - Moderate
+    return "#ef4444"; // red - Needs Work
   };
+
+  // Custom legend content for proficiency levels
+  const renderLegend = () => (
+    <div className="flex justify-center gap-6 mb-4">
+      <div className="flex items-center gap-2">
+        <div className="w-4 h-4 rounded" style={{ backgroundColor: "#10b981" }}></div>
+        <span className="text-sm text-gray-600">Strong (≥75%)</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-4 h-4 rounded" style={{ backgroundColor: "#f59e0b" }}></div>
+        <span className="text-sm text-gray-600">Moderate (50-74%)</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="w-4 h-4 rounded" style={{ backgroundColor: "#ef4444" }}></div>
+        <span className="text-sm text-gray-600">Needs Work (&lt;50%)</span>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -120,6 +138,7 @@ export default function DashboardPage() {
             <h2 className="text-xl font-bold text-gray-800 mb-4">
               Performance by Category
             </h2>
+            {renderLegend()}
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={stats.categoryBreakdown}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -131,10 +150,9 @@ export default function DashboardPage() {
                   interval={0}
                   style={{ fontSize: "12px" }}
                 />
-                <YAxis domain={[0, 100]} />
+                <YAxis domain={[0, 100]} label={{ value: 'Accuracy %', angle: -90, position: 'insideLeft' }} />
                 <Tooltip />
-                <Legend />
-                <Bar dataKey="accuracy" name="Accuracy %" fill="#060CE9">
+                <Bar dataKey="accuracy" name="Accuracy %">
                   {stats.categoryBreakdown.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={getAccuracyColor(entry.accuracy)} />
                   ))}
