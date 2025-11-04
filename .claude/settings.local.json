@@ -26,7 +26,8 @@
       "Bash(curl:*)",
       "Bash(lsof:*)",
       "Bash(npx tsx:*)",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": []
