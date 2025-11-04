@@ -42,6 +42,7 @@ model users {
   role                  String                   @default("user") @db.VarChar(20)
   approved              Boolean                  @default(false)
   approved_at           DateTime?                @db.Timestamp(6)
+  game_type_filters     String?                  @db.Text
   quiz_sessions         quiz_sessions[]
   question_attempts     question_attempts[]
   question_mastery      question_mastery[]
