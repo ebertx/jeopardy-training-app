@@ -24,7 +24,9 @@
       "Bash(git commit:*)",
       "WebFetch(domain:github.com)",
       "Bash(curl:*)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(npx tsx:*)",
+      "Bash(git rebase:*)"
     ],
     "deny": [],
     "ask": []

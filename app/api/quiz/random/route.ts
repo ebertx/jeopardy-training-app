@@ -29,6 +29,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const category = searchParams.get("category");
+  const gameTypesParam = searchParams.get("gameTypes");
 
   try {
     // Build where clause
@@ -44,8 +45,42 @@ export async function GET(req: Request) {
       where.classifier_category = category;
     }
 
+    // Add game type filter if provided
+    if (gameTypesParam) {
+      const gameTypes = gameTypesParam.split(",").filter(Boolean);
+
+      if (gameTypes.length > 0) {
+        // Build OR conditions for pattern matching
+        const orConditions: any[] = [];
+
+        gameTypes.forEach((type) => {
+          if (type === "kids") {
+            orConditions.push(
+              { notes: { contains: "Kids", mode: "insensitive" } },
+              { notes: { contains: "Kid's", mode: "insensitive" } }
+            );
+          } else if (type === "teen") {
+            orConditions.push(
+              { notes: { contains: "Teen", mode: "insensitive" } }
+            );
+          } else if (type === "college") {
+            orConditions.push(
+              { notes: { contains: "College", mode: "insensitive" } }
+            );
+          }
+        });
+
+        if (orConditions.length > 0) {
+          where.OR = orConditions;
+        }
+      }
+    }
+
     // Get total count with caching
-    const cacheKey = category && category !== "all" ? `count_${category}` : "count_all";
+    let cacheKey = category && category !== "all" ? `count_${category}` : "count_all";
+    if (gameTypesParam) {
+      cacheKey += `_${gameTypesParam}`;
+    }
     const totalCount = await getCachedCount(where, cacheKey);
 
     if (totalCount === 0) {
@@ -74,6 +109,7 @@ export async function GET(req: Request) {
         clue_value: true,
         round: true,
         air_date: true,
+        notes: true,
       },
     });
 

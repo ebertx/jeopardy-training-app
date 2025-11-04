@@ -15,6 +15,7 @@ interface Question {
   clue_value: number | null;
   round: number | null;
   air_date: string | null;
+  notes: string | null;
 }
 
 export default function QuizPage() {
@@ -28,6 +29,8 @@ export default function QuizPage() {
   const [categories, setCategories] = useState<Array<{ name: string; count: number }>>([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [stats, setStats] = useState({ total: 0, correct: 0 });
+  const [gameTypeFilters, setGameTypeFilters] = useState<string[]>([]);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -41,9 +44,15 @@ export default function QuizPage() {
 
   useEffect(() => {
     if (status === "authenticated") {
+      loadPreferences();
+    }
+  }, [status]);
+
+  useEffect(() => {
+    if (status === "authenticated" && !loadingPreferences) {
       fetchQuestion();
     }
-  }, [status, selectedCategory]);
+  }, [status, selectedCategory, gameTypeFilters, loadingPreferences]);
 
   // Prefetch next question when answer is revealed
   useEffect(() => {
@@ -88,6 +97,45 @@ export default function QuizPage() {
     }
   };
 
+  const loadPreferences = async () => {
+    try {
+      const response = await fetch("/api/preferences");
+      const data = await response.json();
+      if (data.gameTypeFilters) {
+        setGameTypeFilters(data.gameTypeFilters);
+      }
+    } catch (error) {
+      console.error("Error loading preferences:", error);
+    } finally {
+      setLoadingPreferences(false);
+    }
+  };
+
+  const savePreferences = async (filters: string[]) => {
+    try {
+      await fetch("/api/preferences", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ gameTypeFilters: filters }),
+      });
+    } catch (error) {
+      console.error("Error saving preferences:", error);
+    }
+  };
+
+  const buildQuizUrl = () => {
+    const params = new URLSearchParams();
+    if (selectedCategory !== "all") {
+      params.append("category", selectedCategory);
+    }
+    if (gameTypeFilters.length > 0) {
+      params.append("gameTypes", gameTypeFilters.join(","));
+    }
+    return `/api/quiz/random${params.toString() ? `?${params.toString()}` : ""}`;
+  };
+
   const fetchQuestion = async (usePrefetch = true) => {
     // If we have a prefetched question and it's for the same category, use it
     if (usePrefetch && prefetchedQuestion && selectedCategory === selectedCategory) {
@@ -104,10 +152,7 @@ export default function QuizPage() {
     setShowAnswer(false);
 
     try {
-      const url = selectedCategory === "all"
-        ? "/api/quiz/random"
-        : `/api/quiz/random?category=${encodeURIComponent(selectedCategory)}`;
-
+      const url = buildQuizUrl();
       const response = await fetch(url);
       const data = await response.json();
       setQuestion(data);
@@ -122,10 +167,7 @@ export default function QuizPage() {
 
   const prefetchNextQuestion = async () => {
     try {
-      const url = selectedCategory === "all"
-        ? "/api/quiz/random"
-        : `/api/quiz/random?category=${encodeURIComponent(selectedCategory)}`;
-
+      const url = buildQuizUrl();
       const response = await fetch(url);
       const data = await response.json();
       setPrefetchedQuestion(data);
@@ -212,6 +254,15 @@ export default function QuizPage() {
     }
   };
 
+  const handleGameTypeFilterChange = (type: string, checked: boolean) => {
+    const newFilters = checked
+      ? [...gameTypeFilters, type]
+      : gameTypeFilters.filter((f) => f !== type);
+
+    setGameTypeFilters(newFilters);
+    savePreferences(newFilters);
+  };
+
   if (status === "loading" || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -242,21 +293,77 @@ export default function QuizPage() {
               Session: {stats.correct}/{stats.total} ({accuracy}%)
             </span>
           </div>
-          <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
-            Category Filter:
-          </label>
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-jeopardy-blue"
-          >
-            <option value="all">All Categories</option>
-            {categories.map((cat) => (
-              <option key={cat.name} value={cat.name}>
-                {cat.name} ({cat.count})
-              </option>
-            ))}
-          </select>
+
+          {/* Category Filter */}
+          <div className="mb-3 sm:mb-4">
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
+              Category Filter:
+            </label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full sm:w-auto px-3 sm:px-4 py-2 text-sm sm:text-base border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-jeopardy-blue"
+            >
+              <option value="all">All Categories</option>
+              {categories.map((cat) => (
+                <option key={cat.name} value={cat.name}>
+                  {cat.name} ({cat.count})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Game Type Filter */}
+          <div className="border-t border-gray-200 pt-3 sm:pt-4">
+            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
+              Difficulty Level (Youth Mode):
+            </label>
+            <div className="flex flex-wrap gap-3 sm:gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gameTypeFilters.includes("kids")}
+                  onChange={(e) => handleGameTypeFilterChange("kids", e.target.checked)}
+                  className="w-4 h-4 text-jeopardy-blue border-gray-300 rounded focus:ring-jeopardy-blue"
+                />
+                <span className="text-xs sm:text-sm text-gray-700">Kids Jeopardy</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gameTypeFilters.includes("teen")}
+                  onChange={(e) => handleGameTypeFilterChange("teen", e.target.checked)}
+                  className="w-4 h-4 text-jeopardy-blue border-gray-300 rounded focus:ring-jeopardy-blue"
+                />
+                <span className="text-xs sm:text-sm text-gray-700">Teen Jeopardy</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gameTypeFilters.includes("college")}
+                  onChange={(e) => handleGameTypeFilterChange("college", e.target.checked)}
+                  className="w-4 h-4 text-jeopardy-blue border-gray-300 rounded focus:ring-jeopardy-blue"
+                />
+                <span className="text-xs sm:text-sm text-gray-700">College Championship</span>
+              </label>
+              {gameTypeFilters.length > 0 && (
+                <button
+                  onClick={() => {
+                    setGameTypeFilters([]);
+                    savePreferences([]);
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+            {gameTypeFilters.length > 0 && (
+              <p className="text-xs text-gray-500 mt-2 italic">
+                Filter saved - will persist across sessions
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -323,6 +430,7 @@ export default function QuizPage() {
         </div>
 
         {/* Additional Info */}
+        {/* Additional Info */}
         <div className="mt-4 sm:mt-6 bg-white p-3 sm:p-4 rounded-lg shadow-md">
           <div className="flex flex-col sm:flex-row justify-center items-center gap-2 sm:gap-4 md:gap-6 text-gray-800 text-sm sm:text-base">
             <div className="flex items-center gap-2 flex-wrap justify-center">
@@ -341,6 +449,14 @@ export default function QuizPage() {
                       day: "numeric"
                     })}
                   </span>
+                </div>
+              </>
+            )}
+            {question.notes && (
+              <>
+                <span className="text-gray-400">•</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500 italic">{question.notes}</span>
                 </div>
               </>
             )}
