@@ -35,6 +35,7 @@ export default function Navigation({ title, username, userRole, bgColor = 'bg-je
           <div className="hidden md:flex items-center gap-6">
             {username && <span className="text-sm">Welcome, {username}!</span>}
             <Link href="/quiz" className="hover:underline">Quiz</Link>
+            <Link href="/coryat" className="hover:underline">Coryat</Link>
             <Link href="/review" className="hover:underline">Review</Link>
             <Link href="/mastered" className="hover:underline">Mastered</Link>
             <Link href="/study" className="hover:underline">Study</Link>
@@ -52,6 +53,7 @@ export default function Navigation({ title, username, userRole, bgColor = 'bg-je
           <div className="md:hidden mt-4 flex flex-col gap-3 pb-2">
             {username && <span className="text-sm py-2 border-b border-white/20">Welcome, {username}!</span>}
             <Link href="/quiz" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Quiz</Link>
+            <Link href="/coryat" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Coryat</Link>
             <Link href="/review" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Review</Link>
             <Link href="/mastered" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Mastered</Link>
             <Link href="/study" className="hover:underline py-2" onClick={() => setIsMenuOpen(false)}>Study</Link>
