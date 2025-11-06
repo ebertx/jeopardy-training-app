@@ -235,6 +235,23 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Coryat Training */}
+        <div className="bg-white p-6 rounded-lg shadow mb-8">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">
+            Coryat Training Mode
+          </h2>
+          <p className="text-gray-600 mb-4">
+            Practice with full Jeopardy! game boards using the Coryat scoring method.
+            Track your progress and aim for the average contestant score of $24,000.
+          </p>
+          <Link
+            href="/coryat"
+            className="inline-block px-6 py-3 bg-jeopardy-gold text-jeopardy-blue font-bold rounded-lg hover:bg-yellow-400 transition-colors"
+          >
+            Start Coryat Game
+          </Link>
+        </div>
+
         {/* Start Quiz Button */}
         <div className="text-center">
           <Link
