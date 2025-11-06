@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(
   req: Request,
-  { params }: { params: { questionId: string } }
+  { params }: { params: Promise<{ questionId: string }> }
 ) {
   const session = await getServerSession(authOptions);
 
@@ -13,7 +13,8 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const questionId = parseInt(params.questionId);
+  const { questionId: questionIdParam } = await params;
+  const questionId = parseInt(questionIdParam);
 
   if (isNaN(questionId)) {
     return NextResponse.json({ error: "Invalid question ID" }, { status: 400 });
