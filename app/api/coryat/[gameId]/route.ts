@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(
   req: Request,
-  { params }: { params: { gameId: string } }
+  { params }: { params: Promise<{ gameId: string }> }
 ) {
   const session = await getServerSession(authOptions);
 
@@ -14,7 +14,8 @@ export async function GET(
   }
 
   const userId = parseInt(session.user.id);
-  const gameId = parseInt(params.gameId);
+  const { gameId: gameIdParam } = await params;
+  const gameId = parseInt(gameIdParam);
 
   if (isNaN(gameId)) {
     return NextResponse.json({ error: "Invalid game ID" }, { status: 400 });
