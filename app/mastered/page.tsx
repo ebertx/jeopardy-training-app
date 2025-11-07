@@ -115,6 +115,7 @@ export default function MasteredPage() {
           questionId: question.id,
           correct,
           sessionId: null, // Don't track sessions for mastered review
+          isReviewSession: true,
         }),
       });
 
