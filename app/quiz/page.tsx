@@ -31,6 +31,8 @@ export default function QuizPage() {
   const [stats, setStats] = useState({ total: 0, correct: 0 });
   const [gameTypeFilters, setGameTypeFilters] = useState<string[]>([]);
   const [loadingPreferences, setLoadingPreferences] = useState(true);
+  const [showSessionSummary, setShowSessionSummary] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState<any>(null);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -254,6 +256,39 @@ export default function QuizPage() {
     }
   };
 
+  const handleEndSession = async () => {
+    if (!sessionId) {
+      alert("No active session to end");
+      return;
+    }
+
+    if (!confirm("End this quiz session?")) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/quiz/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSessionSummary(data.summary);
+        setShowSessionSummary(true);
+        setSessionId(null);
+        setStats({ total: 0, correct: 0 });
+      } else {
+        alert(data.error || "Failed to end session");
+      }
+    } catch (error) {
+      console.error("Error ending session:", error);
+      alert("Failed to end session");
+    }
+  };
+
   const handleGameTypeFilterChange = (type: string, checked: boolean) => {
     const newFilters = checked
       ? [...gameTypeFilters, type]
@@ -288,10 +323,21 @@ export default function QuizPage() {
       {/* Session Stats & Category Filter */}
       <div className="bg-white shadow-sm p-3 sm:p-4">
         <div className="max-w-6xl mx-auto">
-          <div className="mb-3 sm:mb-4 text-center">
+          <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+            <div className="flex-1"></div>
             <span className="text-xs sm:text-sm font-medium text-gray-700">
               Session: {stats.correct}/{stats.total} ({accuracy}%)
             </span>
+            <div className="flex-1 flex justify-end">
+              {sessionId && stats.total > 0 && (
+                <button
+                  onClick={handleEndSession}
+                  className="px-3 py-1 text-xs sm:text-sm bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                >
+                  End Session
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Category Filter */}
@@ -463,6 +509,76 @@ export default function QuizPage() {
           </div>
         </div>
       </div>
+
+      {/* Session Summary Modal */}
+      {showSessionSummary && sessionSummary && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 sm:p-8">
+            <h2 className="text-2xl font-bold text-jeopardy-blue mb-6 text-center">
+              Session Complete!
+            </h2>
+
+            <div className="space-y-4 mb-6">
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-center">
+                  <div className="text-4xl font-bold text-jeopardy-blue mb-2">
+                    {sessionSummary.accuracy}%
+                  </div>
+                  <div className="text-sm text-gray-600">Accuracy</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-gray-50 p-3 rounded">
+                  <div className="text-2xl font-bold text-gray-700">
+                    {sessionSummary.total}
+                  </div>
+                  <div className="text-xs text-gray-500">Total</div>
+                </div>
+                <div className="bg-green-50 p-3 rounded">
+                  <div className="text-2xl font-bold text-green-600">
+                    {sessionSummary.correct}
+                  </div>
+                  <div className="text-xs text-gray-500">Correct</div>
+                </div>
+                <div className="bg-red-50 p-3 rounded">
+                  <div className="text-2xl font-bold text-red-600">
+                    {sessionSummary.incorrect}
+                  </div>
+                  <div className="text-xs text-gray-500">Incorrect</div>
+                </div>
+              </div>
+
+              <div className="text-center text-sm text-gray-600">
+                <div>
+                  Started: {new Date(sessionSummary.started_at).toLocaleTimeString()}
+                </div>
+                <div>
+                  Ended: {new Date(sessionSummary.completed_at).toLocaleTimeString()}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowSessionSummary(false);
+                  router.push("/dashboard");
+                }}
+                className="flex-1 px-4 py-2 bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Go to Dashboard
+              </button>
+              <button
+                onClick={() => setShowSessionSummary(false)}
+                className="flex-1 px-4 py-2 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Start New Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
