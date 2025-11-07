@@ -252,11 +252,11 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* Start Quiz Button */}
-        <div className="text-center">
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row sm:justify-center gap-4 items-stretch sm:items-center">
           <Link
             href="/quiz"
-            className="inline-block px-8 py-4 bg-jeopardy-blue text-white font-bold text-xl rounded-lg hover:bg-blue-700 transition-colors"
+            className="px-8 py-4 bg-jeopardy-blue text-white font-bold text-xl rounded-lg hover:bg-blue-700 transition-colors text-center min-h-[60px] flex items-center justify-center"
           >
             Start Quiz
           </Link>
@@ -264,13 +264,13 @@ export default function DashboardPage() {
             <>
               <Link
                 href="/review"
-                className="inline-block ml-4 px-8 py-4 bg-gray-600 text-white font-bold text-xl rounded-lg hover:bg-gray-700 transition-colors"
+                className="px-8 py-4 bg-gray-600 text-white font-bold text-xl rounded-lg hover:bg-gray-700 transition-colors text-center min-h-[60px] flex items-center justify-center"
               >
                 Review Wrong Answers
               </Link>
               <Link
                 href="/mastered"
-                className="inline-block ml-4 px-8 py-4 bg-green-700 text-white font-bold text-xl rounded-lg hover:bg-green-800 transition-colors"
+                className="px-8 py-4 bg-green-700 text-white font-bold text-xl rounded-lg hover:bg-green-800 transition-colors text-center min-h-[60px] flex items-center justify-center"
               >
                 Review Mastered Questions
               </Link>
