@@ -49,29 +49,49 @@ export async function GET(req: Request) {
     });
 
     // Get category-specific stats
-    const categoryBreakdown = await prisma.$queryRaw<
-      Array<{
-        classifier_category: string;
-        total: bigint;
-        correct: bigint;
-      }>
-    >`
-      SELECT
-        jq.classifier_category,
-        COUNT(*)::bigint as total,
-        SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::bigint as correct
-      FROM question_attempts qa
-      JOIN jeopardy_questions jq ON qa.question_id = jq.id
-      JOIN quiz_sessions qs ON qa.session_id = qs.id
-      WHERE qa.user_id = ${userId}
-        AND jq.archived = false
-        ${includeReviewed ? '' : 'AND qs.is_review_session = false'}
-      GROUP BY jq.classifier_category
-      ORDER BY jq.classifier_category
-    `;
+    const categoryBreakdown = includeReviewed
+      ? await prisma.$queryRaw<
+          Array<{
+            classifier_category: string;
+            total: bigint;
+            correct: bigint;
+          }>
+        >`
+          SELECT
+            jq.classifier_category,
+            COUNT(*)::bigint as total,
+            SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::bigint as correct
+          FROM question_attempts qa
+          JOIN jeopardy_questions jq ON qa.question_id = jq.id
+          JOIN quiz_sessions qs ON qa.session_id = qs.id
+          WHERE qa.user_id = ${userId}
+            AND jq.archived = false
+          GROUP BY jq.classifier_category
+          ORDER BY jq.classifier_category
+        `
+      : await prisma.$queryRaw<
+          Array<{
+            classifier_category: string;
+            total: bigint;
+            correct: bigint;
+          }>
+        >`
+          SELECT
+            jq.classifier_category,
+            COUNT(*)::bigint as total,
+            SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::bigint as correct
+          FROM question_attempts qa
+          JOIN jeopardy_questions jq ON qa.question_id = jq.id
+          JOIN quiz_sessions qs ON qa.session_id = qs.id
+          WHERE qa.user_id = ${userId}
+            AND jq.archived = false
+            AND qs.is_review_session = false
+          GROUP BY jq.classifier_category
+          ORDER BY jq.classifier_category
+        `;
 
     // Convert bigint to number for JSON serialization
-    const formattedCategoryBreakdown = categoryBreakdown.map((cat: any) => ({
+    const formattedCategoryBreakdown = (categoryBreakdown || []).map((cat: any) => ({
       category: cat.classifier_category,
       total: Number(cat.total),
       correct: Number(cat.correct),
@@ -118,8 +138,12 @@ export async function GET(req: Request) {
     });
   } catch (error) {
     console.error("Error fetching stats:", error);
+    console.error("Error details:", JSON.stringify(error, null, 2));
     return NextResponse.json(
-      { error: "Failed to fetch statistics" },
+      {
+        error: "Failed to fetch statistics",
+        details: error instanceof Error ? error.message : String(error)
+      },
       { status: 500 }
     );
   }
