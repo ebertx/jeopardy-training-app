@@ -45,6 +45,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [includeReviewed, setIncludeReviewed] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -56,11 +57,12 @@ export default function DashboardPage() {
     if (status === "authenticated") {
       fetchStats();
     }
-  }, [status]);
+  }, [status, includeReviewed]);
 
   const fetchStats = async () => {
     try {
-      const response = await fetch("/api/stats");
+      const url = `/api/stats?includeReviewed=${includeReviewed}`;
+      const response = await fetch(url);
       const data = await response.json();
       setStats(data);
     } catch (error) {
@@ -122,6 +124,39 @@ export default function DashboardPage() {
       <Navigation title="Performance Dashboard" username={session?.user?.username} userRole={session?.user?.role} />
 
       <div className="max-w-6xl mx-auto p-8">
+        {/* Filter Toggle */}
+        <div className="bg-white p-4 rounded-lg shadow mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-700 mb-1">Statistics Filter</h3>
+              <p className="text-xs text-gray-500">
+                {includeReviewed
+                  ? "Showing all questions (including reviewed material)"
+                  : "Showing only newly answered questions (review sessions excluded)"}
+              </p>
+            </div>
+            <label className="flex items-center cursor-pointer">
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={includeReviewed}
+                  onChange={(e) => setIncludeReviewed(e.target.checked)}
+                />
+                <div className={`block w-14 h-8 rounded-full transition-colors ${
+                  includeReviewed ? 'bg-jeopardy-blue' : 'bg-gray-300'
+                }`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${
+                  includeReviewed ? 'transform translate-x-6' : ''
+                }`}></div>
+              </div>
+              <div className="ml-3 text-sm font-medium text-gray-700">
+                Include Review Sessions
+              </div>
+            </label>
+          </div>
+        </div>
+
         {/* Overall Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow">

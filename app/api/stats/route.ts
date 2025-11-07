@@ -3,23 +3,37 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
 
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const { searchParams } = new URL(req.url);
+  const includeReviewed = searchParams.get("includeReviewed") === "true";
   const userId = parseInt(session.user.id);
 
   try {
+    // Build base where clause for filtering sessions
+    const sessionFilter = includeReviewed
+      ? {} // Include all sessions
+      : { is_review_session: false }; // Exclude review sessions by default
+
     // Overall stats
     const totalAttempts = await prisma.question_attempts.count({
-      where: { user_id: userId },
+      where: {
+        user_id: userId,
+        session: sessionFilter,
+      },
     });
 
     const correctAttempts = await prisma.question_attempts.count({
-      where: { user_id: userId, correct: true },
+      where: {
+        user_id: userId,
+        correct: true,
+        session: sessionFilter,
+      },
     });
 
     // Category breakdown
@@ -27,6 +41,7 @@ export async function GET() {
       by: ["correct"],
       where: {
         user_id: userId,
+        session: sessionFilter,
       },
       _count: {
         correct: true,
@@ -47,8 +62,10 @@ export async function GET() {
         SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::bigint as correct
       FROM question_attempts qa
       JOIN jeopardy_questions jq ON qa.question_id = jq.id
+      JOIN quiz_sessions qs ON qa.session_id = qs.id
       WHERE qa.user_id = ${userId}
         AND jq.archived = false
+        ${includeReviewed ? '' : 'AND qs.is_review_session = false'}
       GROUP BY jq.classifier_category
       ORDER BY jq.classifier_category
     `;
@@ -65,7 +82,10 @@ export async function GET() {
 
     // Recent sessions
     const recentSessions = await prisma.quiz_sessions.findMany({
-      where: { user_id: userId },
+      where: {
+        user_id: userId,
+        ...sessionFilter,
+      },
       orderBy: { started_at: "desc" },
       take: 10,
       include: {

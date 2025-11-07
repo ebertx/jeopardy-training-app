@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { questionId, correct, sessionId } = await req.json();
+    const { questionId, correct, sessionId, isReviewSession } = await req.json();
     const userId = parseInt(session.user.id);
 
     if (!questionId || typeof correct !== "boolean") {
@@ -29,6 +29,7 @@ export async function POST(req: Request) {
         data: {
           user_id: userId,
           started_at: new Date(),
+          is_review_session: isReviewSession || false,
         },
       });
       quizSessionId = newSession.id;
