@@ -133,6 +133,7 @@ export default function ReviewPage() {
         body: JSON.stringify({
           questionId: sessionQuestions[currentIndex].question.id,
           correct,
+          isReviewSession: true,
         }),
       });
 
