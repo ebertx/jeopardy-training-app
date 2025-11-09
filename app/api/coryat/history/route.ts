@@ -35,9 +35,9 @@ export async function GET() {
 
     // Calculate statistics
     const totalGames = games.length;
-    const scores = games.map(g => g.final_score || 0);
+    const scores = games.map((g: { final_score: number | null }) => g.final_score || 0);
     const averageScore = totalGames > 0
-      ? Math.round(scores.reduce((sum, score) => sum + score, 0) / totalGames)
+      ? Math.round(scores.reduce((sum: number, score: number) => sum + score, 0) / totalGames)
       : 0;
     const bestScore = totalGames > 0 ? Math.max(...scores) : 0;
     const worstScore = totalGames > 0 ? Math.min(...scores) : 0;
@@ -48,8 +48,8 @@ export async function GET() {
       const recentGames = games.slice(0, 3);
       const olderGames = games.slice(-3);
 
-      const recentAvg = recentGames.reduce((sum, g) => sum + (g.final_score || 0), 0) / recentGames.length;
-      const olderAvg = olderGames.reduce((sum, g) => sum + (g.final_score || 0), 0) / olderGames.length;
+      const recentAvg = recentGames.reduce((sum: number, g: { final_score: number | null }) => sum + (g.final_score || 0), 0) / recentGames.length;
+      const olderAvg = olderGames.reduce((sum: number, g: { final_score: number | null }) => sum + (g.final_score || 0), 0) / olderGames.length;
 
       if (recentAvg > olderAvg * 1.1) {
         trend = 'improving';

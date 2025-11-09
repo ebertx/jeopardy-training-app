@@ -47,7 +47,7 @@ async function selectCategories(count: number, excludeCategories: string[] = [])
 
   // Shuffle and select
   const shuffled = categories
-    .map(c => c.category!)
+    .map((c: { category: string | null }) => c.category!)
     .sort(() => Math.random() - 0.5);
 
   return shuffled.slice(0, count);
