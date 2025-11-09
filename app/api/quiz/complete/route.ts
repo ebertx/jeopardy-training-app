@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     // Calculate statistics
     const totalQuestions = quizSession.question_attempts.length;
     const correctAnswers = quizSession.question_attempts.filter(
-      (a) => a.correct
+      (a: { correct: boolean }) => a.correct
     ).length;
     const accuracy =
       totalQuestions > 0
