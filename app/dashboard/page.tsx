@@ -8,6 +8,8 @@ import Navigation from "../components/Navigation";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -24,6 +26,12 @@ interface CategoryStat {
   accuracy: number;
 }
 
+interface DailyStat {
+  date: string;
+  avgPercentage: number;
+  sessionCount: number;
+}
+
 interface Stats {
   overall: {
     total: number;
@@ -38,6 +46,7 @@ interface Stats {
     total: number;
     correct: number;
   }>;
+  dailyStats: DailyStat[];
 }
 
 export default function DashboardPage() {
@@ -172,6 +181,52 @@ export default function DashboardPage() {
             <p className="text-3xl font-bold text-jeopardy-blue">{stats.overall.accuracy}%</p>
           </div>
         </div>
+
+        {/* Daily Session Performance */}
+        {stats.dailyStats && stats.dailyStats.length > 0 && (
+          <div className="bg-white p-6 rounded-lg shadow mb-8">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">
+              Daily Session Performance
+            </h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Average percentage correct per day
+            </p>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={stats.dailyStats}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="date"
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                  style={{ fontSize: "12px" }}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  label={{ value: 'Average % Correct', angle: -90, position: 'insideLeft' }}
+                />
+                <Tooltip
+                  formatter={(value: number, name: string) => {
+                    if (name === 'avgPercentage') {
+                      return [`${value.toFixed(1)}%`, 'Avg % Correct'];
+                    }
+                    return [value, name];
+                  }}
+                  labelFormatter={(label: string) => `Date: ${label}`}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="avgPercentage"
+                  stroke="#0c47b7"
+                  strokeWidth={2}
+                  dot={{ fill: '#0c47b7', r: 4 }}
+                  activeDot={{ r: 6 }}
+                  name="Avg % Correct"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
 
         {/* Category Performance */}
         {stats.categoryBreakdown.length > 0 && (
