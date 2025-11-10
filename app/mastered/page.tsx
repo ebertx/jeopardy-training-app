@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Navigation from "../components/Navigation";
+import QuestionCard from "../components/QuestionCard";
 
 interface MasteredQuestion {
   id: number;
@@ -221,93 +222,42 @@ export default function MasteredPage() {
       </div>
 
       {/* Question Card */}
-      <div className="max-w-4xl mx-auto p-8">
-        <div className="bg-green-700 text-yellow-300 p-8 rounded-lg shadow-xl">
-          <div className="text-center mb-6">
-            <div className="flex justify-center items-center gap-3 text-sm opacity-90 mb-3">
-              <span>{question.classifier_category}</span>
-              {question.clue_value && <span>• ${question.clue_value}</span>}
-              {question.mastered_at && (
-                <span className="bg-yellow-300 text-green-800 px-3 py-1 rounded-full font-semibold text-xs">
-                  Mastered {new Date(question.mastered_at).toLocaleDateString()}
-                </span>
-              )}
-            </div>
-            <div className="text-3xl font-bold leading-relaxed">
-              {question.answer}
-            </div>
-          </div>
-
-          {!showAnswer ? (
-            <div className="text-center mt-8">
+      <div className="max-w-4xl mx-auto p-3 sm:p-4 md:p-6 lg:p-8">
+        <QuestionCard
+          clue={question.answer}
+          answer={question.question}
+          category={question.category}
+          classifierCategory={question.classifier_category}
+          clueValue={question.clue_value}
+          airDate={question.air_date}
+          showAnswer={showAnswer}
+          onRevealAnswer={() => setShowAnswer(true)}
+          onCorrect={() => handleAnswer(true)}
+          onIncorrect={() => handleAnswer(false)}
+          cardBgColor="bg-green-700"
+          cardTextColor="text-yellow-300"
+          buttonBgColor="bg-yellow-300"
+          buttonTextColor="text-green-800"
+          buttonHoverColor="hover:bg-yellow-200"
+          keyboardHint={!showAnswer ? "Press Space to reveal" : undefined}
+          badge={
+            question.mastered_at ? (
+              <span className="bg-yellow-300 text-green-800 px-2 sm:px-3 py-1 rounded-full font-semibold text-xs">
+                Mastered {new Date(question.mastered_at).toLocaleDateString()}
+              </span>
+            ) : undefined
+          }
+          additionalActions={
+            showAnswer ? (
               <button
-                onClick={() => setShowAnswer(true)}
-                className="px-8 py-3 bg-yellow-300 text-green-800 font-bold text-lg rounded-lg hover:bg-yellow-200 transition-colors"
+                onClick={handleResetMastery}
+                className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-2 sm:py-3 bg-orange-600 text-white font-bold text-sm sm:text-base md:text-lg rounded-lg hover:bg-orange-700 transition-colors"
               >
-                Show Answer
+                🔄 Reset Mastery
               </button>
-              <div className="text-white text-sm mt-4 opacity-70">
-                Press Space to reveal
-              </div>
-            </div>
-          ) : (
-            <div className="mt-8">
-              <div className="bg-white text-green-800 p-6 rounded-lg text-center mb-6">
-                <div className="text-xl font-bold">{question.question}</div>
-              </div>
-
-              <div className="flex gap-3 justify-center flex-wrap">
-                <button
-                  onClick={() => handleAnswer(false)}
-                  className="px-6 py-3 bg-red-600 text-white font-bold text-lg rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  Incorrect ✗
-                </button>
-                <button
-                  onClick={() => handleAnswer(true)}
-                  className="px-6 py-3 bg-green-600 text-white font-bold text-lg rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  Correct ✓
-                </button>
-                <button
-                  onClick={handleResetMastery}
-                  className="px-6 py-3 bg-orange-600 text-white font-bold text-lg rounded-lg hover:bg-orange-700 transition-colors"
-                >
-                  🔄 Reset Mastery
-                </button>
-              </div>
-
-              <div className="text-white text-sm mt-4 text-center opacity-70">
-                Use "Reset Mastery" to add this question back to your review queue
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Additional Info */}
-        <div className="mt-6 bg-white p-4 rounded-lg shadow-md">
-          <div className="flex justify-center items-center gap-6 text-gray-800">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-green-700">Original Category:</span>
-              <span className="text-lg font-medium">{question.category}</span>
-            </div>
-            {question.air_date && (
-              <>
-                <span className="text-gray-400">•</span>
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-green-700">Aired:</span>
-                  <span className="text-lg font-medium">
-                    {new Date(question.air_date).toLocaleDateString("en-US", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric"
-                    })}
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+            ) : undefined
+          }
+        />
       </div>
     </div>
   );
