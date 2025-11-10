@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Navigation from "../components/Navigation";
+import QuestionCard from "../components/QuestionCard";
 
 interface WrongAnswer {
   question: {
@@ -199,92 +200,19 @@ export default function ReviewPage() {
 
         {/* Question Card */}
         <div className="max-w-4xl mx-auto p-3 sm:p-4 md:p-6 lg:p-8">
-          <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 md:p-8">
-            {/* Category Badge */}
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-4 sm:mb-6">
-              <span className="px-2.5 py-1 sm:px-3 bg-blue-100 text-blue-800 text-xs sm:text-sm font-semibold rounded-full">
-                {currentQuestion.classifier_category}
-              </span>
-              {currentQuestion.clue_value && (
-                <span className="text-base sm:text-lg font-bold text-jeopardy-gold">
-                  ${currentQuestion.clue_value}
-                </span>
-              )}
-            </div>
-
-            {/* Metadata */}
-            <div className="bg-gray-50 p-3 sm:p-4 rounded-lg mb-4 sm:mb-6">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-gray-700 text-sm sm:text-base">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Original Category:</span>
-                  <span className="font-medium break-words">{currentQuestion.category}</span>
-                </div>
-                {currentQuestion.air_date && (
-                  <>
-                    <span className="text-gray-400 hidden sm:inline">•</span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-jeopardy-blue text-xs sm:text-sm">Aired:</span>
-                      <span className="font-medium">
-                        {new Date(currentQuestion.air_date).toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric"
-                        })}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Clue */}
-            <div className="mb-6 sm:mb-8 p-4 sm:p-6 bg-jeopardy-blue text-white rounded-lg">
-              <div className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold leading-relaxed break-words">
-                {currentQuestion.answer}
-              </div>
-            </div>
-
-            {/* Revealed Answer */}
-            {revealed && (
-              <div className="mb-4 sm:mb-6 p-4 sm:p-6 bg-green-50 rounded-lg border-2 border-green-200">
-                <p className="text-xs sm:text-sm font-medium text-gray-700 mb-2">
-                  Correct Response:
-                </p>
-                <div className="text-base sm:text-lg md:text-xl font-bold text-green-800 break-words">
-                  {currentQuestion.question}
-                </div>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex gap-2 sm:gap-4 justify-center flex-wrap">
-              {!revealed ? (
-                <button
-                  onClick={() => setRevealed(true)}
-                  className="px-6 py-3 sm:px-8 sm:py-4 bg-jeopardy-blue text-white text-base sm:text-lg md:text-xl font-bold rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Reveal Answer
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={() => handleSessionSubmit(true)}
-                    disabled={submitting}
-                    className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-3 sm:py-4 bg-green-600 text-white text-base sm:text-lg md:text-xl font-bold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    ✓ Correct
-                  </button>
-                  <button
-                    onClick={() => handleSessionSubmit(false)}
-                    disabled={submitting}
-                    className="flex-1 min-w-[140px] sm:flex-none sm:px-6 md:px-8 py-3 sm:py-4 bg-red-600 text-white text-base sm:text-lg md:text-xl font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    ✗ Incorrect
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          <QuestionCard
+            clue={currentQuestion.answer}
+            answer={currentQuestion.question}
+            category={currentQuestion.category}
+            classifierCategory={currentQuestion.classifier_category}
+            clueValue={currentQuestion.clue_value}
+            airDate={currentQuestion.air_date}
+            showAnswer={revealed}
+            onRevealAnswer={() => setRevealed(true)}
+            onCorrect={() => handleSessionSubmit(true)}
+            onIncorrect={() => handleSessionSubmit(false)}
+            submitting={submitting}
+          />
         </div>
       </div>
     );
