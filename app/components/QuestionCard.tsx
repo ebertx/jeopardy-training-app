@@ -9,6 +9,7 @@ export interface QuestionCardProps {
   category: string;
   classifierCategory: string;
   clueValue: number | null;
+  round: number | null;
   airDate: string | null;
 
   // Display state
@@ -42,6 +43,7 @@ export default function QuestionCard({
   category,
   classifierCategory,
   clueValue,
+  round,
   airDate,
   showAnswer: revealed,
   onRevealAnswer,
@@ -58,6 +60,8 @@ export default function QuestionCard({
   buttonHoverColor = "hover:bg-yellow-400",
   submitting = false,
 }: QuestionCardProps) {
+  // Determine if this is a Final Jeopardy question (round 3)
+  const isFinalJeopardy = round === 3;
   return (
     <>
       {/* Question Card */}
@@ -67,7 +71,7 @@ export default function QuestionCard({
           <div className="text-xs sm:text-sm opacity-80 mb-2 flex justify-center items-center gap-2 flex-wrap">
             <span>
               {classifierCategory}
-              {clueValue && ` • $${clueValue}`}
+              {clueValue ? ` • $${clueValue}` : isFinalJeopardy ? " • Final Jeopardy" : ""}
             </span>
             {badge && <span>{badge}</span>}
           </div>
