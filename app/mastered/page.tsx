@@ -229,6 +229,7 @@ export default function MasteredPage() {
           category={question.category}
           classifierCategory={question.classifier_category}
           clueValue={question.clue_value}
+          round={question.round}
           airDate={question.air_date}
           showAnswer={showAnswer}
           onRevealAnswer={() => setShowAnswer(true)}
