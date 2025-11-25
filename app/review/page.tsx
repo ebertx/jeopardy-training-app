@@ -206,6 +206,7 @@ export default function ReviewPage() {
             category={currentQuestion.category}
             classifierCategory={currentQuestion.classifier_category}
             clueValue={currentQuestion.clue_value}
+            round={currentQuestion.round}
             airDate={currentQuestion.air_date}
             showAnswer={revealed}
             onRevealAnswer={() => setRevealed(true)}
