@@ -125,7 +125,9 @@ export async function GET(req: Request) {
       correct: session.question_attempts.filter((a: any) => a.correct).length,
     }));
 
-    // Get daily average session percentage correct
+    // Get daily weighted average percentage correct
+    // Uses weighted average: (total correct / total questions) * 100
+    // This gives more weight to sessions with more questions
     const dailyStats = includeReviewed
       ? await prisma.$queryRaw<
           Array<{
@@ -134,27 +136,19 @@ export async function GET(req: Request) {
             session_count: bigint;
           }>
         >`
-          WITH session_percentages AS (
-            SELECT
-              qs.id,
-              DATE(qs.completed_at) as date,
-              CASE
-                WHEN COUNT(qa.id) > 0
-                THEN (SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::float / COUNT(qa.id)) * 100
-                ELSE 0
-              END as percentage
-            FROM quiz_sessions qs
-            LEFT JOIN question_attempts qa ON qs.id = qa.session_id
-            WHERE qs.user_id = ${userId}
-              AND qs.completed_at IS NOT NULL
-            GROUP BY qs.id, DATE(qs.completed_at)
-          )
           SELECT
-            date,
-            AVG(percentage)::numeric(10,2) as avg_percentage,
-            COUNT(*)::bigint as session_count
-          FROM session_percentages
-          GROUP BY date
+            DATE(qs.completed_at) as date,
+            CASE
+              WHEN COUNT(qa.id) > 0
+              THEN (SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::float / COUNT(qa.id)) * 100
+              ELSE 0
+            END::numeric(10,2) as avg_percentage,
+            COUNT(DISTINCT qs.id)::bigint as session_count
+          FROM quiz_sessions qs
+          LEFT JOIN question_attempts qa ON qs.id = qa.session_id
+          WHERE qs.user_id = ${userId}
+            AND qs.completed_at IS NOT NULL
+          GROUP BY DATE(qs.completed_at)
           ORDER BY date ASC
         `
       : await prisma.$queryRaw<
@@ -164,28 +158,20 @@ export async function GET(req: Request) {
             session_count: bigint;
           }>
         >`
-          WITH session_percentages AS (
-            SELECT
-              qs.id,
-              DATE(qs.completed_at) as date,
-              CASE
-                WHEN COUNT(qa.id) > 0
-                THEN (SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::float / COUNT(qa.id)) * 100
-                ELSE 0
-              END as percentage
-            FROM quiz_sessions qs
-            LEFT JOIN question_attempts qa ON qs.id = qa.session_id
-            WHERE qs.user_id = ${userId}
-              AND qs.completed_at IS NOT NULL
-              AND qs.is_review_session = false
-            GROUP BY qs.id, DATE(qs.completed_at)
-          )
           SELECT
-            date,
-            AVG(percentage)::numeric(10,2) as avg_percentage,
-            COUNT(*)::bigint as session_count
-          FROM session_percentages
-          GROUP BY date
+            DATE(qs.completed_at) as date,
+            CASE
+              WHEN COUNT(qa.id) > 0
+              THEN (SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::float / COUNT(qa.id)) * 100
+              ELSE 0
+            END::numeric(10,2) as avg_percentage,
+            COUNT(DISTINCT qs.id)::bigint as session_count
+          FROM quiz_sessions qs
+          LEFT JOIN question_attempts qa ON qs.id = qa.session_id
+          WHERE qs.user_id = ${userId}
+            AND qs.completed_at IS NOT NULL
+            AND qs.is_review_session = false
+          GROUP BY DATE(qs.completed_at)
           ORDER BY date ASC
         `;
 
