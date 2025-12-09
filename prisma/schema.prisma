@@ -48,6 +48,7 @@ model users {
   question_mastery      question_mastery[]
   study_recommendations study_recommendations[]
   coryat_games          coryat_games[]
+  auth_sessions         auth_sessions[]
 
   @@index([approved])
   @@index([role])
@@ -132,4 +133,15 @@ model coryat_games {
   @@index([user_id])
   @@index([completed_at])
   @@index([user_id, completed_at])
+}
+
+// NextAuth database sessions for persistent login (especially iOS PWA)
+model auth_sessions {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       Int      @map("user_id")
+  expires      DateTime
+  user         users    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("auth_sessions")
 }

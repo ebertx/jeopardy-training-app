@@ -2,6 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
+import { randomUUID } from "crypto";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -38,11 +39,24 @@ export const authOptions: NextAuthOptions = {
           throw new Error("Your account is pending approval. You'll receive an email once approved.");
         }
 
+        // Create a persistent session in the database
+        const sessionToken = randomUUID();
+        const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+        await prisma.auth_sessions.create({
+          data: {
+            sessionToken,
+            userId: user.id,
+            expires,
+          },
+        });
+
         return {
           id: user.id.toString(),
           email: user.email,
           name: user.username,
           role: user.role,
+          sessionToken, // Pass to JWT callback
         };
       }
     })
@@ -98,10 +112,39 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.username = user.name;
         token.role = user.role;
+        token.dbSessionToken = (user as any).sessionToken;
       }
+
+      // Validate database session still exists and is not expired
+      if (token.dbSessionToken) {
+        const dbSession = await prisma.auth_sessions.findUnique({
+          where: { sessionToken: token.dbSessionToken as string },
+        });
+
+        if (!dbSession || dbSession.expires < new Date()) {
+          // Session expired or deleted, force re-login
+          return { ...token, error: "SessionExpired" };
+        }
+
+        // Refresh session expiry on activity (every 24 hours)
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        if (dbSession.expires < new Date(Date.now() + 29 * 24 * 60 * 60 * 1000)) {
+          // Less than 29 days left, extend it
+          await prisma.auth_sessions.update({
+            where: { sessionToken: token.dbSessionToken as string },
+            data: { expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) },
+          });
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
+      if (token.error === "SessionExpired") {
+        // Force client to re-authenticate
+        return { ...session, error: "SessionExpired" };
+      }
+
       if (session.user) {
         session.user.id = token.id as string;
         session.user.username = token.username as string;
@@ -109,5 +152,17 @@ export const authOptions: NextAuthOptions = {
       }
       return session;
     }
-  }
+  },
+  events: {
+    async signOut({ token }) {
+      // Clean up database session on logout
+      if (token?.dbSessionToken) {
+        await prisma.auth_sessions.delete({
+          where: { sessionToken: token.dbSessionToken as string },
+        }).catch(() => {
+          // Ignore if already deleted
+        });
+      }
+    },
+  },
 };

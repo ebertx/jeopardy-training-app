@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
 import { useState } from 'react';
+import { clearPersistentToken } from '@/components/AuthRestorer';
 
 interface NavigationProps {
   title: string;
@@ -44,7 +45,7 @@ export default function Navigation({ title, username, userRole, bgColor = 'bg-je
             {userRole === 'admin' && (
               <Link href="/admin" className="hover:underline text-yellow-300 font-semibold">Admin</Link>
             )}
-            <button onClick={() => signOut()} className="hover:underline">Logout</button>
+            <button onClick={() => { clearPersistentToken(); signOut(); }} className="hover:underline">Logout</button>
           </div>
         </div>
 
@@ -62,7 +63,7 @@ export default function Navigation({ title, username, userRole, bgColor = 'bg-je
             {userRole === 'admin' && (
               <Link href="/admin" className="hover:underline py-2 text-yellow-300 font-semibold" onClick={() => setIsMenuOpen(false)}>Admin</Link>
             )}
-            <button onClick={() => signOut()} className="hover:underline py-2 text-left">Logout</button>
+            <button onClick={() => { clearPersistentToken(); signOut(); }} className="hover:underline py-2 text-left">Logout</button>
           </div>
         )}
       </div>
