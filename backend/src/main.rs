@@ -44,6 +44,9 @@ async fn main() {
         .route("/api/stats", get(routes::stats::stats))
         .route("/api/categories", get(routes::categories::list))
         .route("/api/preferences", get(routes::preferences::get).put(routes::preferences::update))
+        .route("/api/questions/:id", get(routes::questions::get_question))
+        .route("/api/questions/:id/archive", post(routes::questions::archive))
+        .route("/api/questions/:id/unarchive", post(routes::questions::unarchive))
         .with_state(state);
 
     tracing::info!("Listening on {}", addr);
