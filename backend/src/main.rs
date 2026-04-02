@@ -6,16 +6,36 @@ mod models;
 mod routes;
 
 use axum::{routing::{get, post}, Json, Router};
+use axum::http::HeaderValue;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 
 pub struct AppState {
     pub pool: sqlx::PgPool,
     pub config: config::Config,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|a| a.as_str()) == Some("--healthcheck") {
+        let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+        let addr = format!("127.0.0.1:{}", port);
+        match std::net::TcpStream::connect(&addr) {
+            Ok(_) => std::process::exit(0),
+            Err(_) => std::process::exit(1),
+        }
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(run());
+}
+
+async fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -29,7 +49,11 @@ async fn main() {
 
     let state = Arc::new(AppState { pool, config });
 
-    let app = Router::new()
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
+    let spa_fallback = ServeFile::new(format!("{}/index.html", static_dir));
+    let serve_static = ServeDir::new(&static_dir).fallback(spa_fallback);
+
+    let api_routes = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/register", post(routes::auth::register))
         .route("/api/auth/login", post(routes::auth::login))
@@ -58,6 +82,31 @@ async fn main() {
         .route("/api/admin/users", get(routes::admin::list_users))
         .route("/api/admin/approve", post(routes::admin::approve))
         .with_state(state);
+
+    let app = Router::new()
+        .merge(api_routes)
+        .fallback_service(serve_static)
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("x-content-type-options"),
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("content-security-policy"),
+            HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"),
+        ))
+        .layer(tower_http::compression::CompressionLayer::new());
 
     tracing::info!("Listening on {}", addr);
     let listener = TcpListener::bind(&addr).await.unwrap();
