@@ -42,3 +42,7 @@ prisma/migrations/
 # rust backend
 backend/target/
 backend/.env
+
+# svelte frontend
+frontend/node_modules/
+frontend/.svelte-kit/
