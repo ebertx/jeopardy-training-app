@@ -3,8 +3,9 @@ mod config;
 mod db;
 mod error;
 mod models;
+mod routes;
 
-use axum::{routing::get, Json, Router};
+use axum::{routing::{get, post}, Json, Router};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
@@ -30,6 +31,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/auth/register", post(routes::auth::register))
+        .route("/api/auth/login", post(routes::auth::login))
+        .route("/api/auth/logout", post(routes::auth::logout))
+        .route("/api/auth/me", get(routes::auth::me))
         .with_state(state);
 
     tracing::info!("Listening on {}", addr);
