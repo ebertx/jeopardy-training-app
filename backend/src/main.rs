@@ -52,6 +52,9 @@ async fn main() {
         .route("/api/coryat/:id", get(routes::coryat::get_game))
         .route("/api/coryat/:id/answer", post(routes::coryat::answer))
         .route("/api/coryat/:id/complete", post(routes::coryat::complete))
+        .route("/api/study/generate", post(routes::study::generate))
+        .route("/api/study/latest", get(routes::study::latest))
+        .route("/api/study/history", get(routes::study::history))
         .with_state(state);
 
     tracing::info!("Listening on {}", addr);
