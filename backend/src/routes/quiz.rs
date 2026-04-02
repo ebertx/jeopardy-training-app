@@ -28,7 +28,7 @@ pub async fn random(
         game_types_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
     };
 
-    // Build WHERE clause
+    // Build WHERE clause with bind parameter for category
     let mut conditions = vec![
         "question IS NOT NULL".to_string(),
         "answer IS NOT NULL".to_string(),
@@ -37,11 +37,16 @@ pub async fn random(
         "archived = false".to_string(),
     ];
 
-    if category != "all" {
-        conditions.push(format!("classifier_category = '{}'", category.replace('\'', "''")));
+    // Track bind parameter index (starts at $1)
+    let mut bind_idx = 1;
+    let use_category_filter = category != "all";
+    if use_category_filter {
+        conditions.push(format!("classifier_category = ${}", bind_idx));
+        bind_idx += 1;
     }
+    let _ = bind_idx; // suppress unused warning
 
-    // Add game type exclusion filters
+    // Add game type exclusion filters (hardcoded strings, safe from injection)
     for gt in &game_types {
         match *gt {
             "kids" => conditions.push(
@@ -56,8 +61,12 @@ pub async fn random(
     let where_clause = conditions.join(" AND ");
 
     // Count matching questions
-    let count_sql = format!("SELECT COUNT(*) FROM questions WHERE {}", where_clause);
-    let total_count: i64 = sqlx::query_scalar(&count_sql)
+    let count_sql = format!("SELECT COUNT(*) FROM jeopardy_questions WHERE {}", where_clause);
+    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
+    if use_category_filter {
+        count_query = count_query.bind(category);
+    }
+    let total_count: i64 = count_query
         .fetch_one(&state.pool)
         .await?;
 
@@ -76,11 +85,15 @@ pub async fn random(
     // Fetch question at that offset ordered by air_date DESC
     let question_sql = format!(
         "SELECT id, question, answer, category, classifier_category, clue_value, round, air_date, notes \
-         FROM questions WHERE {} ORDER BY air_date DESC LIMIT 1 OFFSET {}",
+         FROM jeopardy_questions WHERE {} ORDER BY air_date DESC LIMIT 1 OFFSET {}",
         where_clause, offset
     );
 
-    let question = sqlx::query_as::<_, Question>(&question_sql)
+    let mut question_query = sqlx::query_as::<_, Question>(&question_sql);
+    if use_category_filter {
+        question_query = question_query.bind(category);
+    }
+    let question = question_query
         .fetch_optional(&state.pool)
         .await?
         .ok_or_else(|| AppError::NotFound("No question found at offset".to_string()))?;
