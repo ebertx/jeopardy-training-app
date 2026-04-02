@@ -35,6 +35,9 @@ async fn main() {
         .route("/api/auth/login", post(routes::auth::login))
         .route("/api/auth/logout", post(routes::auth::logout))
         .route("/api/auth/me", get(routes::auth::me))
+        .route("/api/quiz/random", get(routes::quiz::random))
+        .route("/api/quiz/submit", post(routes::quiz::submit))
+        .route("/api/quiz/complete", post(routes::quiz::complete))
         .with_state(state);
 
     tracing::info!("Listening on {}", addr);
