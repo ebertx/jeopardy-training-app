@@ -7,3 +7,4 @@ pub mod questions;
 pub mod quiz;
 pub mod review;
 pub mod stats;
+pub mod study;
