@@ -1,6 +1,7 @@
 mod config;
 mod db;
 mod error;
+mod models;
 
 use axum::{routing::get, Json, Router};
 use std::sync::Arc;
