@@ -1,54 +1,32 @@
-# Build stage
-FROM node:20-alpine AS builder
-
-WORKDIR /app
-
-# Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
-
-# Copy package files
-COPY package*.json ./
-COPY prisma ./prisma/
-
-# Install dependencies
+# Stage 1: Build frontend
+FROM node:22-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
 RUN npm ci
-
-# Copy source code
-COPY . .
-
-# Generate Prisma Client
-RUN npx prisma generate
-
-# Build Next.js app
+COPY frontend/ ./
 RUN npm run build
 
-# Production stage
-FROM node:20-alpine AS runner
-
+# Stage 2: Build Rust backend
+FROM rust:bookworm AS rust-build
 WORKDIR /app
 
-# Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
+# Copy Cargo files for dependency caching
+COPY backend/Cargo.toml backend/Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release && rm -rf src target/release/jeopardy-server target/release/deps/jeopardy*
 
-ENV NODE_ENV=production
+# Copy real source + frontend build
+COPY backend/src ./src
+COPY --from=frontend-build /app/frontend/build ./static
 
-# Copy built application
-COPY --from=builder /app/next.config.ts ./
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/prisma ./prisma
+# Build with SQLX_OFFLINE=true (use cached query metadata)
+COPY backend/.sqlx ./.sqlx
+ENV SQLX_OFFLINE=true
+RUN cargo build --release
 
-# Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-RUN chown -R nextjs:nodejs /app
-USER nextjs
-
+# Stage 3: Runtime (distroless)
+FROM gcr.io/distroless/cc-debian12
+COPY --from=rust-build /app/target/release/jeopardy-server /app/server
+COPY --from=rust-build /app/static /app/static
+ENV STATIC_DIR=/app/static
 EXPOSE 3000
-
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["npm", "start"]
+ENTRYPOINT ["/app/server"]
