@@ -1,34 +1,33 @@
-version: '3.8'
-
 services:
-  jeopardy-training:
+  jeopardy:
     image: ghcr.io/ebertx/jeopardy-training-app:latest
-    container_name: jeopardy-training-app
     restart: unless-stopped
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-      - NEXTAUTH_URL=${NEXTAUTH_URL}
-    labels:
-      # Traefik labels for reverse proxy
-      - "traefik.enable=true"
-      - "traefik.http.routers.jeopardy.rule=Host(`jeopardy.ebertx.com`)"
-      - "traefik.http.routers.jeopardy.entrypoints=websecure"
-      - "traefik.http.routers.jeopardy.tls=true"
-      - "traefik.http.routers.jeopardy.tls.certresolver=letsencrypt"
-      - "traefik.http.services.jeopardy.loadbalancer.server.port=3000"
-
-      # Watchtower labels for auto-updates
-      - "com.centurylinklabs.watchtower.enable=true"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    env_file: .env
     networks:
-      - web
+      - jeopardy-internal
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/auth/csrf"]
+      test: ["/app/server", "--healthcheck"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 40s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    networks:
+      - jeopardy-internal
+    depends_on:
+      jeopardy:
+        condition: service_healthy
 
 networks:
-  web:
-    external: true
+  jeopardy-internal:
+    driver: bridge
