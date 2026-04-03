@@ -18,9 +18,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release && r
 COPY backend/src ./src
 COPY --from=frontend-build /app/frontend/build ./static
 
-# Build with SQLX_OFFLINE=true (use cached query metadata)
-COPY backend/.sqlx ./.sqlx
-ENV SQLX_OFFLINE=true
+# Build (uses runtime queries, no SQLX_OFFLINE needed)
 RUN cargo build --release
 
 # Stage 3: Runtime (distroless)
