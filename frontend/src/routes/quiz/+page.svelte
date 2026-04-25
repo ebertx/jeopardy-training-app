@@ -122,7 +122,7 @@
     }
     try {
       const result = await api.post('/api/quiz/complete', { sessionId });
-      sessionSummary = result;
+      sessionSummary = result.summary;
       showSessionSummary = true;
     } catch (err: any) {
       error = err?.message ?? 'Failed to end session';
