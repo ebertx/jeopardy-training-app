@@ -278,7 +278,7 @@ pub async fn complete(
     let total = stats.0;
     let correct = stats.1;
     let accuracy = if total > 0 {
-        correct as f64 / total as f64
+        (correct as f64 / total as f64) * 100.0
     } else {
         0.0
     };

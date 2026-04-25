@@ -68,7 +68,7 @@ pub async fn stats(
     let total = overall.0;
     let correct = overall.1;
     let accuracy = if total > 0 {
-        correct as f64 / total as f64
+        (correct as f64 / total as f64) * 100.0
     } else {
         0.0
     };
@@ -95,7 +95,7 @@ pub async fn stats(
         .into_iter()
         .map(|c| {
             let cat_accuracy = if c.total > 0 {
-                c.correct as f64 / c.total as f64
+                (c.correct as f64 / c.total as f64) * 100.0
             } else {
                 0.0
             };

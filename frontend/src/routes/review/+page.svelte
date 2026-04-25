@@ -211,8 +211,8 @@
       {#if currentSessionItem}
         <div class="min-h-[420px]">
           <QuestionCard
-            clue={currentSessionItem.question.question}
-            answer={currentSessionItem.question.answer}
+            clue={currentSessionItem.question.answer}
+            answer={currentSessionItem.question.question}
             category={currentSessionItem.question.category}
             classifierCategory={currentSessionItem.question.classifier_category}
             clueValue={currentSessionItem.question.clue_value}
@@ -306,7 +306,7 @@
                   />
                   <span class="ml-auto text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
                 </div>
-                <p class="text-sm text-gray-700 line-clamp-2">{item.question.question}</p>
+                <p class="text-sm text-gray-700 line-clamp-2">{item.question.answer}</p>
               </button>
 
               <!-- Expanded content -->
@@ -314,7 +314,7 @@
                 <div class="px-5 pb-4 border-t border-gray-100 pt-3">
                   <div class="mb-3">
                     <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Correct Response</p>
-                    <p class="text-gray-900 font-medium">{item.question.answer}</p>
+                    <p class="text-gray-900 font-medium">{item.question.question}</p>
                   </div>
                   <div class="flex flex-wrap gap-4 text-xs text-gray-500 mb-4">
                     <span>

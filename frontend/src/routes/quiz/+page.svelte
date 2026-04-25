@@ -261,8 +261,8 @@
     {:else if question}
       <div class="min-h-[420px]">
         <QuestionCard
-          clue={question.clue}
-          answer={question.answer}
+          clue={question.answer}
+          answer={question.question}
           category={question.category}
           classifierCategory={question.classifier_category ?? question.classifierCategory ?? question.category}
           clueValue={question.clue_value ?? question.clueValue ?? null}

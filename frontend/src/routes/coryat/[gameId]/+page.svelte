@@ -273,7 +273,7 @@
             {selectedQuestion.category ?? ''}
           </p>
           <p class="text-white text-lg sm:text-xl font-semibold leading-relaxed">
-            {selectedQuestion.clue}
+            {selectedQuestion.answer}
           </p>
         </div>
 
@@ -287,7 +287,7 @@
         {:else}
           <div class="bg-white/10 rounded-xl p-4 text-center">
             <p class="text-yellow-200 text-xs font-bold uppercase tracking-widest mb-1">Answer</p>
-            <p class="text-white text-lg font-bold">{selectedQuestion.answer}</p>
+            <p class="text-white text-lg font-bold">{selectedQuestion.question}</p>
           </div>
 
           <div class="flex gap-3">
@@ -356,7 +356,7 @@
           {finalQuestion.category ?? game?.final_jeopardy?.category ?? ''}
         </p>
         <p class="text-white text-lg font-semibold text-center leading-relaxed">
-          {finalQuestion.clue}
+          {finalQuestion.answer}
         </p>
 
         {#if !showFinalAnswer}
@@ -369,7 +369,7 @@
         {:else}
           <div class="bg-white/10 rounded-xl p-4 text-center">
             <p class="text-yellow-200 text-xs font-bold uppercase tracking-widest mb-1">Answer</p>
-            <p class="text-white text-lg font-bold">{finalQuestion.answer}</p>
+            <p class="text-white text-lg font-bold">{finalQuestion.question}</p>
           </div>
           <p class="text-gray-300 text-sm text-center italic">
             Final Jeopardy is not scored in Coryat — it's for viewing only.

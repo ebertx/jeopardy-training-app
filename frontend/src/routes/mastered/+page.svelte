@@ -144,8 +144,8 @@
     {:else}
       <div class="min-h-[420px]">
         <QuestionCard
-          clue={masteredQuestion.question}
-          answer={masteredQuestion.answer}
+          clue={masteredQuestion.answer}
+          answer={masteredQuestion.question}
           category={masteredQuestion.category}
           classifierCategory={masteredQuestion.classifier_category}
           clueValue={masteredQuestion.clue_value}
