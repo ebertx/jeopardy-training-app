@@ -106,7 +106,7 @@ pub async fn login(
 
     // Set cookie
     let cookie = format!(
-        "token={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=2592000",
+        "token={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000",
         token
     );
     let mut headers = HeaderMap::new();
@@ -126,7 +126,7 @@ pub async fn login(
 }
 
 pub async fn logout() -> Result<(HeaderMap, Json<Value>), AppError> {
-    let cookie = "token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0";
+    let cookie = "token=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0";
     let mut headers = HeaderMap::new();
     headers.insert(SET_COOKIE, cookie.parse().unwrap());
     Ok((headers, Json(json!({ "message": "Logged out" }))))

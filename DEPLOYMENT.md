@@ -1,29 +1,28 @@
 # Deployment — Tailscale-only on Unraid
 
-The app is reachable **only over Tailscale** at `https://tower.tail11628.ts.net`. There is no public DNS, no exposed port on the WAN, and no Cloudflare Tunnel. TLS is provided by `tailscale serve` using MagicDNS certs.
+The app is reachable **only over Tailscale** at `http://tower.tail11628.ts.net:3000`. The container's port 3000 is bound to Tower's Tailscale IP (`100.92.27.16`) — unreachable from the LAN or WAN. WireGuard (Tailscale's transport) encrypts the traffic, so plain HTTP is fine inside the tailnet.
 
 ## Architecture
 
 ```
 [client on tailnet]
-       │ HTTPS (MagicDNS cert)
+       │ HTTP over WireGuard (encrypted by Tailscale)
        ▼
-   tailscaled on Tower (tailscale serve)
-       │ HTTP
+   100.92.27.16:3000 (Tower's Tailscale IP, host port)
+       │
        ▼
-   127.0.0.1:3000 (jeopardy-server container)
+   jeopardy-server container (port 3000)
        │
        ▼
    host.docker.internal:5432 (postgresql15 on Tower, via host-gateway in extra_hosts)
 ```
 
-Container is hardened: `read_only`, `cap_drop: ALL`, `no-new-privileges`, distroless runtime image (no shell). Port 3000 is bound to the host's loopback only — nothing on the LAN can reach it.
+Container is hardened: `read_only`, `cap_drop: ALL`, `no-new-privileges`, distroless runtime image (no shell). The port binding to the Tailscale IP means nothing outside the tailnet can reach it.
 
 ## Deploy Flow
 
 1. Push to `main` → GitHub Actions builds and pushes `ghcr.io/ebertx/jeopardy-training-app:latest`
 2. Watchtower (already running on Tower) pulls the new image and restarts the container
-3. `tailscale serve` keeps proxying transparently — no restart needed there
 
 ## One-Time Setup on Tower
 
@@ -54,40 +53,25 @@ scp docker-compose.yml root@tower:/mnt/user/appdata/jeopardy-training-app/
 
 ```bash
 cd /mnt/user/appdata/jeopardy-training-app
-docker compose up -d
+docker-compose up -d
 docker logs jeopardy-server
 ```
 
-Verify it's listening on loopback only:
+Verify it's bound to the Tailscale IP only:
 
 ```bash
 ss -tlnp | grep :3000
-# Should show: 127.0.0.1:3000   (NOT 0.0.0.0:3000)
+# Should show: 100.92.27.16:3000   (NOT 0.0.0.0:3000)
 ```
 
-### 4. Front it with `tailscale serve`
-
-This makes `https://tower.tail11628.ts.net` proxy to `localhost:3000` over the tailnet, with a real cert from Tailscale's CA.
+### 4. Verify from another tailnet device
 
 ```bash
-tailscale serve --bg --https=443 http://localhost:3000
-tailscale serve status
-```
-
-To remove later:
-
-```bash
-tailscale serve reset
-```
-
-### 5. Verify from another tailnet device
-
-```bash
-curl -I https://tower.tail11628.ts.net/api/health
+curl -I http://tower.tail11628.ts.net:3000/api/health
 # 200 OK
 ```
 
-Open the app at `https://tower.tail11628.ts.net` from a phone/laptop on the tailnet.
+Open the app at `http://tower.tail11628.ts.net:3000` from a phone/laptop on the tailnet.
 
 ## Update Flow (after first deploy)
 
@@ -101,7 +85,7 @@ docker logs --tail 50 watchtower | grep jeopardy
 
 | Secret | When to rotate | How |
 |---|---|---|
-| `JWT_SECRET` | If suspected compromise; invalidates all sessions | `openssl rand -base64 48`, update `.env`, `docker compose up -d` |
+| `JWT_SECRET` | If suspected compromise; invalidates all sessions | `openssl rand -base64 48`, update `.env`, `docker-compose up -d` |
 | `OPENAI_API_KEY` | After last incident; user-side at platform.openai.com | Update `.env`, restart container |
 | Postgres password | Coordinate with `polymarket-tracker` and `health-ingester` (shared user) | Do not rotate without updating consumers |
 
@@ -113,9 +97,6 @@ docker logs --tail 50 watchtower | grep jeopardy
 
 ## Troubleshooting
 
-**`tailscale serve` returns a cert error**
-First request after enabling MagicDNS HTTPS can take 30–60s while the cert is provisioned. Try again.
-
 **Container restarts in a loop**
 ```bash
 docker logs jeopardy-server | tail -50
@@ -126,7 +107,7 @@ Most likely a missing env var (`DATABASE_URL`, `JWT_SECRET`, `OPENAI_API_KEY` ar
 `JWT_SECRET` changed — all existing sessions are invalidated. Users need to log in again. Expected on first deploy and any rotation.
 
 **Database connection refused**
-```bash
-docker exec jeopardy-server /app/server --healthcheck
-```
-If the binary is up but DB is unreachable, verify `host.docker.internal` resolves from the container (it should via `extra_hosts: ["host.docker.internal:host-gateway"]`). Distroless has no shell — debug from a sidecar if needed.
+Verify `host.docker.internal` resolves from the container (it should via `extra_hosts: ["host.docker.internal:host-gateway"]`). Distroless has no shell — debug from a sidecar if needed.
+
+**Cookie not persisting in browser**
+The cookie is `HttpOnly; SameSite=Strict; Path=/` (no `Secure` flag — we're on plain HTTP over the tailnet). If sessions don't persist, check the browser's cookie storage; the cookie shouldn't be blocked since it's not cross-site.

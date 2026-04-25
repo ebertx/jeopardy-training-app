@@ -10,8 +10,8 @@ services:
       - ALL
     env_file: .env
     ports:
-      # Bound to loopback only — exposed externally via `tailscale serve` on the host.
-      - "127.0.0.1:3000:3000"
+      # Bound to Tower's Tailscale IP only — reachable from the tailnet, not from LAN/WAN.
+      - "100.92.27.16:3000:3000"
     extra_hosts:
       # Lets DATABASE_URL use `host.docker.internal` to reach postgresql15 on the Unraid host.
       - "host.docker.internal:host-gateway"
