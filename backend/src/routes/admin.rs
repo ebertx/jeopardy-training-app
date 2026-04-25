@@ -21,7 +21,7 @@ pub async fn list_users(
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(json!({ "users": users })))
+    Ok(Json(json!(users)))
 }
 
 pub async fn approve(

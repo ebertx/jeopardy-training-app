@@ -23,7 +23,7 @@
     generated_at: string;
     days_analyzed: number;
     analysis: string;
-    recommendations: { topics: Topic[] };
+    recommendations: Topic[];
     question_count: number;
   }
 
@@ -180,7 +180,7 @@
         </div>
 
         <!-- Topic cards -->
-        {#each latest.recommendations.topics as topic}
+        {#each latest.recommendations as topic}
           <div class="bg-white rounded-xl shadow p-5 flex flex-col gap-3">
             <h3 class="text-base font-bold text-gray-800">{topic.topic}</h3>
             <p class="text-sm text-gray-600 leading-relaxed">{topic.explanation}</p>
@@ -257,7 +257,7 @@
               <div>
                 <p class="font-semibold text-gray-800 text-sm">{formatDate(rec.generated_at)}</p>
                 <p class="text-xs text-gray-500 mt-0.5">
-                  {rec.days_analyzed} days &bull; {rec.question_count} questions &bull; {rec.recommendations.topics.length} topics
+                  {rec.days_analyzed} days &bull; {rec.question_count} questions &bull; {rec.recommendations.length} topics
                 </p>
               </div>
               <span class="text-gray-400 text-lg">{expandedHistoryIds.has(rec.id) ? '▲' : '▼'}</span>
@@ -267,7 +267,7 @@
               <div class="border-t border-gray-100 px-5 py-4 flex flex-col gap-3">
                 <p class="text-sm text-gray-600 leading-relaxed italic">{rec.analysis}</p>
                 <ul class="flex flex-col gap-1">
-                  {#each rec.recommendations.topics as topic}
+                  {#each rec.recommendations as topic}
                     <li class="text-sm text-gray-700 font-medium">&bull; {topic.topic}</li>
                   {/each}
                 </ul>
