@@ -15,8 +15,8 @@
     completed_at: string | null;
     jeopardy_score: number;
     double_jeopardy_score: number;
-    total_score: number;
-    created_at: string;
+    final_score: number;
+    started_at: string;
   }
 
   let history = $state<GameRecord[]>([]);
@@ -88,8 +88,8 @@
                   <td class="py-3 px-4 text-gray-700">{formatDate(game.completed_at!)}</td>
                   <td class="py-3 px-4 text-right text-gray-700">${game.jeopardy_score.toLocaleString()}</td>
                   <td class="py-3 px-4 text-right text-gray-700">${game.double_jeopardy_score.toLocaleString()}</td>
-                  <td class="py-3 px-4 text-right font-bold {game.total_score >= 32000 ? 'text-green-600' : game.total_score >= 28000 ? 'text-blue-600' : game.total_score >= 24000 ? 'text-amber-600' : 'text-red-600'}">
-                    ${game.total_score.toLocaleString()}
+                  <td class="py-3 px-4 text-right font-bold {game.final_score >= 32000 ? 'text-green-600' : game.final_score >= 28000 ? 'text-blue-600' : game.final_score >= 24000 ? 'text-amber-600' : 'text-red-600'}">
+                    ${game.final_score.toLocaleString()}
                   </td>
                 </tr>
               {/each}

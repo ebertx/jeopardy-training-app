@@ -100,13 +100,20 @@
 
         // Determine which round to show based on answered questions
         const jeopardyRound = game.rounds[0];
-        if (jeopardyRound) {
-          const allJeopardyDone = jeopardyRound.questions.every(
-            (q) => q.question_id === null || q.answered !== null
-          );
-          if (allJeopardyDone && game.rounds.length > 1) {
-            roundIndex = 1;
-          }
+        const djRound = game.rounds[1];
+        const allJeopardyDone = jeopardyRound
+          ? jeopardyRound.questions.every((q) => q.question_id === null || q.answered !== null)
+          : false;
+        const allDjDone = djRound
+          ? djRound.questions.every((q) => q.question_id === null || q.answered !== null)
+          : false;
+
+        if (allJeopardyDone && allDjDone) {
+          // Both rounds complete on load — jump straight into Final Jeopardy.
+          roundIndex = 1;
+          await loadFinalJeopardy();
+        } else if (allJeopardyDone && game.rounds.length > 1) {
+          roundIndex = 1;
         }
       }
     } catch (err: any) {
