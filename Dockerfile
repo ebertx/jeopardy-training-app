@@ -1,85 +1,30 @@
-# ===================================
-# HARDENED DOCKERFILE FOR JEOPARDY APP
-# ===================================
-
-# Build stage
-FROM node:20-alpine AS builder
-
-WORKDIR /app
-
-# Install build dependencies with security updates
-RUN apk add --no-cache --update openssl
-
-# Copy package files
-COPY package*.json ./
-COPY prisma ./prisma/
-
-# Install all dependencies (including devDependencies needed for build)
-RUN npm ci --ignore-scripts
-
-# Copy source code
-COPY . .
-
-# Generate Prisma Client
-RUN npx prisma generate
-
-# Build Next.js app
+# Stage 1: Build frontend
+FROM node:22-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
 RUN npm run build
 
-# ===================================
-# Production stage - HARDENED
-# ===================================
-FROM node:20-alpine AS runner
-
-# Install security updates and minimal runtime dependencies
-RUN apk add --no-cache --update \
-    openssl \
-    dumb-init \
-    && rm -rf /var/cache/apk/*
-
+# Stage 2: Build Rust backend
+FROM rust:bookworm AS rust-build
 WORKDIR /app
 
-# Create non-root user with no shell and specific UID
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S -u 1001 -G nodejs -s /sbin/nologin nextjs
+# Copy Cargo files for dependency caching
+COPY backend/Cargo.toml backend/Cargo.lock ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release && rm -rf src target/release/jeopardy-server target/release/deps/jeopardy*
 
-ENV NODE_ENV=production \
-    NODE_OPTIONS="--max-old-space-size=512" \
-    NPM_CONFIG_LOGLEVEL=error
+# Copy real source + frontend build
+COPY backend/src ./src
+COPY --from=frontend-build /app/frontend/build ./static
 
-# Copy built application with correct ownership
-COPY --from=builder --chown=nextjs:nodejs /app/next.config.ts ./
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
-COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+# Build (uses runtime queries, no SQLX_OFFLINE needed)
+RUN cargo build --release
 
-# Set restrictive permissions
-RUN chmod -R 550 /app && \
-    chmod -R 770 /app/.next/cache && \
-    chown -R nextjs:nodejs /app
-
-# Create read-only temp directory for Next.js
-RUN mkdir -p /tmp/.next && \
-    chown nextjs:nodejs /tmp/.next && \
-    chmod 770 /tmp/.next
-
-# Switch to non-root user
-USER nextjs
-
-# Expose port
+# Stage 3: Runtime (distroless)
+FROM gcr.io/distroless/cc-debian12
+COPY --from=rust-build /app/target/release/jeopardy-server /app/server
+COPY --from=rust-build /app/static /app/static
+ENV STATIC_DIR=/app/static
 EXPOSE 3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/api/auth/csrf', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
-ENV PORT=3000 \
-    HOSTNAME="0.0.0.0"
-
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-
-# Run with restricted permissions
-CMD ["node_modules/.bin/next", "start"]
+ENTRYPOINT ["/app/server"]

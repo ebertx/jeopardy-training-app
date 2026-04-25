@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-jeopardy-blue: #060CE9;
+  --color-jeopardy-gold: #FFD700;
+}

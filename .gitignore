@@ -38,3 +38,11 @@ next-env.d.ts
 
 # prisma
 prisma/migrations/
+
+# rust backend
+backend/target/
+backend/.env
+
+# svelte frontend
+frontend/node_modules/
+frontend/.svelte-kit/
