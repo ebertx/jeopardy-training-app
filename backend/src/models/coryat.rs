@@ -21,5 +21,5 @@ pub struct CoryatAnswerRequest {
     pub round: String,
     pub col: i32,
     pub row: i32,
-    pub response: String,
+    pub result: String,
 }

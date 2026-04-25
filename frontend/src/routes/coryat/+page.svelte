@@ -55,7 +55,7 @@
     error = '';
     try {
       const result = await api.post('/api/coryat');
-      goto(`/coryat/${result.id}`);
+      goto(`/coryat/${result.game_id}`);
     } catch (err: any) {
       error = err?.message ?? 'Failed to start game';
       starting = false;

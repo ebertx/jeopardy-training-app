@@ -271,9 +271,40 @@ pub async fn create(
 
     Ok(Json(json!({
         "success": true,
-        "gameId": game_id,
-        "gameBoard": game_board,
+        "game_id": game_id,
     })))
+}
+
+fn shape_game_response(game: &crate::models::coryat::CoryatGame) -> Value {
+    let board = &game.game_board;
+    let rounds_obj = board.get("rounds");
+    let jeopardy = rounds_obj.and_then(|r| r.get("jeopardy")).cloned().unwrap_or(json!({}));
+    let double_j = rounds_obj.and_then(|r| r.get("double_jeopardy")).cloned().unwrap_or(json!({}));
+    let final_j = rounds_obj.and_then(|r| r.get("final_jeopardy")).cloned().unwrap_or(json!({}));
+    json!({
+        "id": game.id,
+        "rounds": [
+            {
+                "round": "jeopardy",
+                "categories": jeopardy.get("categories").cloned().unwrap_or(json!([])),
+                "questions": jeopardy.get("questions").cloned().unwrap_or(json!([])),
+            },
+            {
+                "round": "double_jeopardy",
+                "categories": double_j.get("categories").cloned().unwrap_or(json!([])),
+                "questions": double_j.get("questions").cloned().unwrap_or(json!([])),
+            },
+        ],
+        "final_jeopardy": final_j,
+        "started_at": game.started_at,
+        "completed_at": game.completed_at,
+        "jeopardy_score": game.jeopardy_score,
+        "double_jeopardy_score": game.double_j_score,
+        "final_score": game.final_score,
+        "total_score": game.jeopardy_score + game.double_j_score,
+        "current_round": game.current_round,
+        "questions_answered": game.questions_answered,
+    })
 }
 
 pub async fn get_game(
@@ -292,18 +323,7 @@ pub async fn get_game(
     .await?
     .ok_or_else(|| AppError::NotFound("Game not found".to_string()))?;
 
-    Ok(Json(json!({
-        "id": game.id,
-        "userId": game.user_id,
-        "startedAt": game.started_at,
-        "completedAt": game.completed_at,
-        "gameBoard": game.game_board,
-        "jeopardyScore": game.jeopardy_score,
-        "doubleJScore": game.double_j_score,
-        "finalScore": game.final_score,
-        "currentRound": game.current_round,
-        "questionsAnswered": game.questions_answered,
-    })))
+    Ok(Json(shape_game_response(&game)))
 }
 
 pub async fn answer(
@@ -373,7 +393,7 @@ pub async fn answer(
         .unwrap_or(0) as i32;
 
     // Calculate score change
-    let score_change = match body.response.as_str() {
+    let score_change = match body.result.as_str() {
         "correct" => value,
         "incorrect" => -value,
         _ => 0, // "pass" or anything else
@@ -389,7 +409,7 @@ pub async fn answer(
         .and_then(|arr| arr.get_mut(cell_idx))
         .ok_or_else(|| AppError::Internal("Failed to mutate game board".to_string()))?;
 
-    cell_mut["answered"] = json!(body.response);
+    cell_mut["answered"] = json!(body.result);
 
     // Update scores
     let new_j_score;
@@ -430,11 +450,13 @@ pub async fn answer(
 
     Ok(Json(json!({
         "success": true,
-        "scoreChange": score_change,
-        "currentRoundScore": current_round_score,
-        "totalScore": new_j_score + new_dj_score,
-        "questionsRemaining": questions_remaining,
-        "questionsAnswered": new_questions_answered,
+        "score_change": score_change,
+        "current_round_score": current_round_score,
+        "total_score": new_j_score + new_dj_score,
+        "questions_remaining": questions_remaining,
+        "questions_answered": new_questions_answered,
+        "jeopardy_score": new_j_score,
+        "double_jeopardy_score": new_dj_score,
     })))
 }
 
@@ -480,7 +502,7 @@ pub async fn complete(
 
     Ok(Json(json!({
         "success": true,
-        "finalScore": final_score,
+        "final_score": final_score,
     })))
 }
 
@@ -503,11 +525,11 @@ pub async fn history(
         .map(|g| {
             json!({
                 "id": g.id,
-                "startedAt": g.started_at,
-                "completedAt": g.completed_at,
-                "jeopardyScore": g.jeopardy_score,
-                "doubleJScore": g.double_j_score,
-                "finalScore": g.final_score,
+                "started_at": g.started_at,
+                "completed_at": g.completed_at,
+                "jeopardy_score": g.jeopardy_score,
+                "double_jeopardy_score": g.double_j_score,
+                "final_score": g.final_score,
             })
         })
         .collect();
