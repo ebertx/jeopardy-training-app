@@ -14,7 +14,7 @@ The app is reachable **only over Tailscale** at `https://tower.tail11628.ts.net`
    127.0.0.1:3000 (jeopardy-server container)
        │
        ▼
-   172.17.0.1:5432 (postgresql15 on Tower, via docker bridge gateway)
+   host.docker.internal:5432 (postgresql15 on Tower, via host-gateway in extra_hosts)
 ```
 
 Container is hardened: `read_only`, `cap_drop: ALL`, `no-new-privileges`, distroless runtime image (no shell). Port 3000 is bound to the host's loopback only — nothing on the LAN can reach it.
@@ -37,7 +37,7 @@ cd /mnt/user/appdata/jeopardy-training-app
 Write `.env` (replace placeholders — do **not** commit this file):
 
 ```
-DATABASE_URL=postgres://ebertx:***REDACTED***@172.17.0.1:5432/jeopardy
+DATABASE_URL=postgres://ebertx:***REDACTED***@host.docker.internal:5432/jeopardy
 JWT_SECRET=<run: openssl rand -base64 48>
 OPENAI_API_KEY=sk-...
 ```
@@ -107,7 +107,7 @@ docker logs --tail 50 watchtower | grep jeopardy
 
 ## Open Hardening Items (deferred — affects shared infra)
 
-- **PostgreSQL binds `0.0.0.0:5432`.** Consider restricting to `172.17.0.1:5432` (docker bridge) so it's only reachable by containers on Tower. Requires updating `polymarket-tracker` and `health-ingester` if they're going through any non-bridge path.
+- **PostgreSQL binds `0.0.0.0:5432`.** Consider restricting to the docker bridge so it's only reachable by containers on Tower. Requires updating `polymarket-tracker` and `health-ingester` if they're going through any non-bridge path.
 - **Drop `auth_sessions` table.** Was used by the old NextAuth deployment; new app uses stateless JWTs.
 - **Scrub historical secrets from git.** `.env` and an old `NEXTAUTH_SECRET` are in repo history. Use `git filter-repo` if/when you want a clean history.
 
@@ -129,4 +129,4 @@ Most likely a missing env var (`DATABASE_URL`, `JWT_SECRET`, `OPENAI_API_KEY` ar
 ```bash
 docker exec jeopardy-server /app/server --healthcheck
 ```
-If the binary is up but DB is unreachable, check `docker exec jeopardy-server cat /etc/resolv.conf` and try `172.17.0.1` from another container. Distroless has no shell — debug from a sidecar if needed.
+If the binary is up but DB is unreachable, verify `host.docker.internal` resolves from the container (it should via `extra_hosts: ["host.docker.internal:host-gateway"]`). Distroless has no shell — debug from a sidecar if needed.

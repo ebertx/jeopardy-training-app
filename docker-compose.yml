@@ -12,10 +12,13 @@ services:
     ports:
       # Bound to loopback only — exposed externally via `tailscale serve` on the host.
       - "127.0.0.1:3000:3000"
+    extra_hosts:
+      # Lets DATABASE_URL use `host.docker.internal` to reach postgresql15 on the Unraid host.
+      - "host.docker.internal:host-gateway"
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
-      test: ["/app/server", "--healthcheck"]
+      test: ["CMD", "/app/server", "--healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
