@@ -43,7 +43,7 @@
     {/each}
 
     <!-- Value rows (5 rows) -->
-    {#each [1, 2, 3, 4, 5] as row}
+    {#each [0, 1, 2, 3, 4] as row}
       {#each [0, 1, 2, 3, 4, 5] as col}
         {@const q = getQuestion(col, row)}
         {#if q === undefined || q.question_id === null}
