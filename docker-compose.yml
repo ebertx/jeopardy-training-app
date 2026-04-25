@@ -1,6 +1,7 @@
 services:
   jeopardy:
     image: ghcr.io/ebertx/jeopardy-training-app:latest
+    container_name: jeopardy-server
     restart: unless-stopped
     read_only: true
     security_opt:
@@ -8,26 +9,13 @@ services:
     cap_drop:
       - ALL
     env_file: .env
-    networks:
-      - jeopardy-internal
+    ports:
+      # Bound to loopback only — exposed externally via `tailscale serve` on the host.
+      - "127.0.0.1:3000:3000"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["/app/server", "--healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel run
-    environment:
-      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
-    networks:
-      - jeopardy-internal
-    depends_on:
-      jeopardy:
-        condition: service_healthy
-
-networks:
-  jeopardy-internal:
-    driver: bridge

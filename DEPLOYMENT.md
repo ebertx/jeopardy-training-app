@@ -1,264 +1,132 @@
-# Deployment Guide - Unraid with Traefik
+# Deployment — Tailscale-only on Unraid
 
-This guide sets up automated deployments from GitHub to your Unraid server using Traefik, Watchtower, and GitHub Container Registry.
+The app is reachable **only over Tailscale** at `https://tower.tail11628.ts.net`. There is no public DNS, no exposed port on the WAN, and no Cloudflare Tunnel. TLS is provided by `tailscale serve` using MagicDNS certs.
 
-## Overview
+## Architecture
 
-**Deployment Flow:**
-1. Push code to `main` branch on GitHub
-2. GitHub Actions builds Docker image
-3. Image pushed to GitHub Container Registry (GHCR)
-4. Watchtower on Unraid detects new image
-5. Container automatically updated and restarted
-6. Accessible via Traefik reverse proxy at jeopardy.ebertx.com
-
----
-
-## One-Time Setup (For All Apps)
-
-### 1. Configure Traefik on Unraid (Installed via Community Apps)
-
-Since Traefik is installed via Unraid Community Apps and uses ports 8001/44301, we need to configure it for Cloudflare DNS challenge.
-
-**Create `/mnt/user/appdata/traefik/traefik.yml`:**
-
-```yaml
-api:
-  dashboard: true
-  insecure: true
-
-entryPoints:
-  web:
-    address: ":80"
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
-  websecure:
-    address: ":443"
-
-certificatesResolvers:
-  letsencrypt:
-    acme:
-      email: ebertx@gmail.com
-      storage: /letsencrypt/acme.json
-      dnsChallenge:
-        provider: cloudflare
-        resolvers:
-          - "1.1.1.1:53"
-          - "1.0.0.1:53"
-
-providers:
-  docker:
-    endpoint: "unix:///var/run/docker.sock"
-    exposedByDefault: false
-    network: traefik
-
-log:
-  level: INFO
+```
+[client on tailnet]
+       │ HTTPS (MagicDNS cert)
+       ▼
+   tailscaled on Tower (tailscale serve)
+       │ HTTP
+       ▼
+   127.0.0.1:3000 (jeopardy-server container)
+       │
+       ▼
+   172.17.0.1:5432 (postgresql15 on Tower, via docker bridge gateway)
 ```
 
-**Add Cloudflare credentials to Traefik container:**
+Container is hardened: `read_only`, `cap_drop: ALL`, `no-new-privileges`, distroless runtime image (no shell). Port 3000 is bound to the host's loopback only — nothing on the LAN can reach it.
 
-Edit your Traefik container in Unraid and add these environment variables:
-- `CF_API_EMAIL=ebertx@gmail.com`
-- `CF_DNS_API_TOKEN=e1HHBX5kFli0kwHm4XNN-HDboizF9_3TQpVCrxyW`
+## Deploy Flow
 
-**Restart Traefik** after making these changes.
+1. Push to `main` → GitHub Actions builds and pushes `ghcr.io/ebertx/jeopardy-training-app:latest`
+2. Watchtower (already running on Tower) pulls the new image and restarts the container
+3. `tailscale serve` keeps proxying transparently — no restart needed there
 
-### 2. Install Watchtower on Unraid
+## One-Time Setup on Tower
 
-In Unraid Community Applications, search for "Watchtower" or create manually:
+### 1. Create app directory + `.env`
 
-```bash
-docker run -d \
-  --name watchtower \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  containrrr/watchtower \
-  --interval 300 \
-  --cleanup \
-  --label-enable
-```
-
-This checks for updates every 5 minutes (300 seconds).
-
-### 3. Configure DNS and Port Forwarding
-
-**In Cloudflare DNS:**
-- Type: A Record
-- Name: `jeopardy`
-- Value: Your public IP address
-- Proxy status: DNS only (gray cloud, not proxied)
-- TTL: Auto
-
-**Configure Router Port Forwarding:**
-
-Since Traefik runs on ports 8001/44301, you need to forward standard ports to these:
-- External Port 80 → Unraid IP:8001
-- External Port 443 → Unraid IP:44301
-
-This allows public internet traffic on standard ports to reach Traefik.
-
----
-
-## Per-App Deployment (This App)
-
-### 1. Enable GitHub Container Registry
-
-Your GitHub Actions workflow is already configured. On first push to `main`, it will:
-- Build the Docker image
-- Push to `ghcr.io/ebertx/jeopardy-training-app`
-
-**Make repository package public** (optional, but recommended for easier Unraid access):
-1. Go to https://github.com/ebertx/jeopardy-training-app/packages
-2. Find your package
-3. Package settings → Change visibility → Public
-
-### 2. Deploy on Unraid
-
-Create directory on Unraid:
 ```bash
 mkdir -p /mnt/user/appdata/jeopardy-training-app
 cd /mnt/user/appdata/jeopardy-training-app
 ```
 
-Create `.env` file:
-```bash
-cat > .env << 'EOF'
-DATABASE_URL=postgresql://ebertx:C&M24postgres@100.92.27.16/jeopardy
-NEXTAUTH_SECRET=j5keXeQun/N0X9bxMgQgkfoSAMnbTGI0vA7F05H+qTU=
-NEXTAUTH_URL=https://jeopardy.ebertx.com
-EOF
+Write `.env` (replace placeholders — do **not** commit this file):
+
+```
+DATABASE_URL=postgres://ebertx:C&M24postgres@172.17.0.1:5432/jeopardy
+JWT_SECRET=<run: openssl rand -base64 48>
+OPENAI_API_KEY=sk-...
 ```
 
-Copy `docker-compose.yml` from this repository to the server:
+### 2. Copy `docker-compose.yml`
+
+From your laptop:
+
 ```bash
-# From your local machine:
-scp docker-compose.yml root@unraid-ip:/mnt/user/appdata/jeopardy-training-app/
+scp docker-compose.yml root@tower:/mnt/user/appdata/jeopardy-training-app/
 ```
 
-The domain is already configured as `jeopardy.ebertx.com` in docker-compose.yml.
+### 3. Start the container
 
-Start the container:
 ```bash
 cd /mnt/user/appdata/jeopardy-training-app
-docker-compose up -d
+docker compose up -d
+docker logs jeopardy-server
 ```
 
-### 3. Verify Deployment
+Verify it's listening on loopback only:
 
-Check container is running:
 ```bash
-docker ps | grep jeopardy
-docker logs jeopardy-training-app
+ss -tlnp | grep :3000
+# Should show: 127.0.0.1:3000   (NOT 0.0.0.0:3000)
 ```
 
-Check Traefik dashboard: `http://unraid-ip:8080`
+### 4. Front it with `tailscale serve`
 
-Access your app: `https://jeopardy.ebertx.com`
+This makes `https://tower.tail11628.ts.net` proxy to `localhost:3000` over the tailnet, with a real cert from Tailscale's CA.
 
----
-
-## How to Deploy Updates
-
-**It's automatic!** Just:
 ```bash
-git add .
-git commit -m "Your changes"
-git push origin main
+tailscale serve --bg --https=443 http://localhost:3000
+tailscale serve status
 ```
 
-GitHub Actions will:
-1. Build new image (2-5 minutes)
-2. Push to GHCR
-3. Watchtower detects new image (within 5 minutes)
-4. Pulls and restarts container automatically
+To remove later:
 
-**Check deployment status:**
-- GitHub Actions: https://github.com/ebertx/jeopardy-training-app/actions
-- Watchtower logs: `docker logs watchtower`
-- App logs: `docker logs jeopardy-training-app`
+```bash
+tailscale serve reset
+```
 
----
+### 5. Verify from another tailnet device
+
+```bash
+curl -I https://tower.tail11628.ts.net/api/health
+# 200 OK
+```
+
+Open the app at `https://tower.tail11628.ts.net` from a phone/laptop on the tailnet.
+
+## Update Flow (after first deploy)
+
+Just push to `main`. Watchtower handles the rest:
+
+```bash
+docker logs --tail 50 watchtower | grep jeopardy
+```
+
+## Secret Rotation
+
+| Secret | When to rotate | How |
+|---|---|---|
+| `JWT_SECRET` | If suspected compromise; invalidates all sessions | `openssl rand -base64 48`, update `.env`, `docker compose up -d` |
+| `OPENAI_API_KEY` | After last incident; user-side at platform.openai.com | Update `.env`, restart container |
+| Postgres password | Coordinate with `polymarket-tracker` and `health-ingester` (shared user) | Do not rotate without updating consumers |
+
+## Open Hardening Items (deferred — affects shared infra)
+
+- **PostgreSQL binds `0.0.0.0:5432`.** Consider restricting to `172.17.0.1:5432` (docker bridge) so it's only reachable by containers on Tower. Requires updating `polymarket-tracker` and `health-ingester` if they're going through any non-bridge path.
+- **Drop `auth_sessions` table.** Was used by the old NextAuth deployment; new app uses stateless JWTs.
+- **Scrub historical secrets from git.** `.env` and an old `NEXTAUTH_SECRET` are in repo history. Use `git filter-repo` if/when you want a clean history.
 
 ## Troubleshooting
 
-### GitHub Actions fails to push image
-**Issue:** Permission denied when pushing to GHCR
+**`tailscale serve` returns a cert error**
+First request after enabling MagicDNS HTTPS can take 30–60s while the cert is provisioned. Try again.
 
-**Fix:** Make sure GitHub Actions has package write permissions:
-1. Repo Settings → Actions → General
-2. Workflow permissions → Read and write permissions
-3. Save
-
-### Watchtower not updating
-**Issue:** Container not updating automatically
-
-**Check:**
+**Container restarts in a loop**
 ```bash
-docker logs watchtower
+docker logs jeopardy-server | tail -50
 ```
+Most likely a missing env var (`DATABASE_URL`, `JWT_SECRET`, `OPENAI_API_KEY` are all required).
 
-**Ensure:**
-- Image label matches: `com.centurylinklabs.watchtower.enable=true`
-- Watchtower has access to docker socket
-- Image is actually different (check GitHub Actions)
+**`401 Unauthorized` on every request after a deploy**
+`JWT_SECRET` changed — all existing sessions are invalidated. Users need to log in again. Expected on first deploy and any rotation.
 
-### Can't access via domain
-**Issue:** Domain not resolving or SSL errors
-
-**Check:**
-1. DNS points to correct Tailscale IP
-2. Traefik is running: `docker ps | grep traefik`
-3. Check Traefik logs: `docker logs traefik`
-4. Verify Traefik dashboard shows your router
-5. Ensure you're connected to Tailscale
-
-### Database connection fails
-**Issue:** App can't connect to PostgreSQL
-
-**Check:**
-1. Database IP is correct (100.92.27.16)
-2. Database is accessible from container:
-   ```bash
-   docker exec jeopardy-training-app wget -O- 100.92.27.16:5432
-   ```
-3. Check .env file has correct DATABASE_URL
-
----
-
-## Reusable Pattern for Other Apps
-
-This setup can be reused for any app! Just:
-
-1. **Copy these files to new project:**
-   - `Dockerfile` (adjust if not Next.js)
-   - `.dockerignore`
-   - `docker-compose.yml` (change app name and domain)
-   - `.github/workflows/deploy.yml` (no changes needed!)
-
-2. **Update docker-compose.yml:**
-   - Change `image: ghcr.io/yourusername/new-app:latest`
-   - Change `container_name: new-app`
-   - Change `Host(` )`new-app.yourdomain.com`)`
-   - Update Traefik router/service names
-
-3. **Deploy:**
-   - Push to GitHub
-   - Copy .env and docker-compose.yml to Unraid
-   - Run `docker-compose up -d`
-   - Done!
-
----
-
-## Security Notes
-
-- ✅ App only accessible via Tailscale (Traefik on Tailscale IP)
-- ✅ SSL certificates automatically managed by Let's Encrypt
-- ✅ Database credentials never in GitHub (use .env)
-- ✅ GHCR images can be private
-- ✅ Watchtower only updates containers with explicit label
-
-**For public apps:** Remove Tailscale requirement and point DNS to public IP instead.
+**Database connection refused**
+```bash
+docker exec jeopardy-server /app/server --healthcheck
+```
+If the binary is up but DB is unreachable, check `docker exec jeopardy-server cat /etc/resolv.conf` and try `172.17.0.1` from another container. Distroless has no shell — debug from a sidecar if needed.
