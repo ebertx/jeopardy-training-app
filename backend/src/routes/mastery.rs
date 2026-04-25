@@ -20,7 +20,7 @@ struct MasteredRow {
     pub category: Option<String>,
     pub classifier_category: Option<String>,
     pub clue_value: Option<i32>,
-    pub round: Option<String>,
+    pub round: Option<i32>,
     pub air_date: Option<chrono::NaiveDate>,
     pub mastered_at: Option<chrono::NaiveDateTime>,
 }

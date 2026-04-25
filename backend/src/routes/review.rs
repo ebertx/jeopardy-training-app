@@ -19,7 +19,7 @@ struct ReviewRow {
     pub category: Option<String>,
     pub classifier_category: Option<String>,
     pub clue_value: Option<i32>,
-    pub round: Option<String>,
+    pub round: Option<i32>,
     pub air_date: Option<chrono::NaiveDate>,
     pub consecutive_correct: i32,
     pub mastered: bool,
