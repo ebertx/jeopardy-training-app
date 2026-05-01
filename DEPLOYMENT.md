@@ -36,7 +36,7 @@ cd /mnt/user/appdata/jeopardy-training-app
 Write `.env` (replace placeholders — do **not** commit this file):
 
 ```
-DATABASE_URL=postgres://ebertx:***REDACTED***@host.docker.internal:5432/jeopardy
+DATABASE_URL=postgres://ebertx:<db-password>@host.docker.internal:5432/jeopardy
 JWT_SECRET=<run: openssl rand -base64 48>
 OPENAI_API_KEY=sk-...
 ```
