@@ -45,6 +45,12 @@ pub async fn generate(
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
 
+    if state.config.openai_api_key.is_empty() {
+        return Err(AppError::BadRequest(
+            "AI study recommendations are currently disabled (no OPENAI_API_KEY configured).".to_string(),
+        ));
+    }
+
     if body.days < 1 || body.days > 365 {
         return Err(AppError::BadRequest("days must be between 1 and 365".to_string()));
     }
