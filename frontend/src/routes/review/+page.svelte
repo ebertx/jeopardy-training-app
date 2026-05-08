@@ -135,7 +135,8 @@
     }
   }
 
-  function endSession() {
+  async function endSession() {
+    await fetchReviewItems();
     inSession = false;
     sessionItems = [];
     sessionIndex = 0;
