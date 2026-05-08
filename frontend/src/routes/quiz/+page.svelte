@@ -29,6 +29,10 @@
   let submitting = $state(false);
   let showEndConfirm = $state(false);
 
+  // Incremented on every filter change; in-flight fetches/prefetches captured
+  // before the change discard their results to avoid leaking old-filter data.
+  let filterGen = $state(0);
+
   // Derived accuracy
   let accuracy = $derived(
     runningStats.total > 0
@@ -45,25 +49,31 @@
   }
 
   async function fetchQuestion() {
+    const gen = filterGen;
     loading = true;
     error = '';
     try {
       const params = buildQuizParams();
       const q = await api.get(`/api/quiz/random?${params}`);
+      if (gen !== filterGen) return;
       question = q;
     } catch (err: any) {
+      if (gen !== filterGen) return;
       error = err?.message ?? 'Failed to load question';
     } finally {
-      loading = false;
+      if (gen === filterGen) loading = false;
     }
   }
 
   function prefetchNextQuestion() {
+    const gen = filterGen;
     const params = buildQuizParams();
     fetch(`/api/quiz/random?${params}`, { credentials: 'same-origin' })
       .then((r) => r.json())
       .then((q) => {
-        prefetchedQuestion = q;
+        if (gen === filterGen) {
+          prefetchedQuestion = q;
+        }
       })
       .catch(() => {});
   }
@@ -118,6 +128,7 @@
   async function handleEndSession() {
     if (!sessionId) {
       showEndConfirm = false;
+      goto('/dashboard');
       return;
     }
     try {
@@ -141,7 +152,9 @@
 
   async function handleCategoryChange(value: string) {
     selectedCategory = value;
+    filterGen++;
     prefetchedQuestion = null;
+    showAnswer = false;
     await fetchQuestion();
   }
 
@@ -152,13 +165,21 @@
       gameTypeFilters = [...gameTypeFilters, type];
     }
     savePreferences();
+    filterGen++;
     prefetchedQuestion = null;
+    showAnswer = false;
     fetchQuestion();
   }
 
   // --- Keyboard shortcuts ---
   function handleKeydown(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+
+    if (showEndConfirm) {
+      if (e.code === 'Escape') showEndConfirm = false;
+      return;
+    }
+    if (showSessionSummary) return;
 
     if (e.code === 'Space' && !showAnswer) {
       e.preventDefault();
@@ -290,8 +311,8 @@
         </QuestionCard>
       </div>
 
-      <!-- Keyboard hint -->
-      <p class="text-center text-xs text-gray-400">
+      <!-- Keyboard hint (desktop only) -->
+      <p class="hidden sm:block text-center text-xs text-gray-400">
         {#if !showAnswer}
           Press <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Space</kbd> to reveal answer
         {:else}
@@ -308,9 +329,18 @@
 
 <!-- End session confirmation -->
 {#if showEndConfirm}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-    <div class="w-full max-w-sm rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4">
-      <h2 class="text-lg font-bold text-gray-800">End Session?</h2>
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+    onclick={(e) => { if (e.target === e.currentTarget) showEndConfirm = false; }}
+    role="presentation"
+  >
+    <div
+      class="w-full max-w-sm rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="end-session-title"
+    >
+      <h2 id="end-session-title" class="text-lg font-bold text-gray-800">End Session?</h2>
       <p class="text-sm text-gray-600">This will complete your current quiz session and show a summary.</p>
       <div class="flex gap-3">
         <button

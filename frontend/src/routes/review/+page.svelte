@@ -234,7 +234,7 @@
           </QuestionCard>
         </div>
 
-        <p class="text-center text-xs text-gray-400">
+        <p class="hidden sm:block text-center text-xs text-gray-400">
           {#if !showAnswer}
             Press <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Space</kbd> to reveal answer
           {:else}
