@@ -338,6 +338,7 @@
       showSessionSummary = false;
       sessionId = null;
       runningStats = { total: 0, correct: 0 };
+      goto('/dashboard');
     }}
   />
 {/if}
