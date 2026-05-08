@@ -90,6 +90,14 @@ async fn run() {
     let app = Router::new()
         .merge(api_routes)
         .fallback_service(serve_static)
+        // API responses set cache-control: no-store inside api_routes; this layer
+        // adds cache-control: no-cache to static assets (HTML, hashed JS) so
+        // browsers (notably iOS Safari/PWA) revalidate every load instead of
+        // serving heuristically-cached stale shells.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::HeaderName::from_static("cache-control"),
+            HeaderValue::from_static("no-cache"),
+        ))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
