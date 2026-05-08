@@ -10,6 +10,7 @@ async function request(method: string, path: string, body?: unknown): Promise<an
   const opts: RequestInit = {
     method,
     credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
   };
   if (body !== undefined) opts.body = JSON.stringify(body);

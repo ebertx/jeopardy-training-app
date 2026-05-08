@@ -69,7 +69,7 @@
   function prefetchNextQuestion() {
     const gen = filterGen;
     const params = buildQuizParams();
-    fetch(`/api/quiz/random?${params}`, { credentials: 'same-origin' })
+    fetch(`/api/quiz/random?${params}`, { credentials: 'same-origin', cache: 'no-store' })
       .then((r) => r.json())
       .then((q) => {
         if (gen === filterGen) {

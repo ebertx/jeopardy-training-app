@@ -81,6 +81,10 @@ async fn run() {
         .route("/api/study/history", get(routes::study::history))
         .route("/api/admin/users", get(routes::admin::list_users))
         .route("/api/admin/approve", post(routes::admin::approve))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("cache-control"),
+            HeaderValue::from_static("no-store"),
+        ))
         .with_state(state);
 
     let app = Router::new()
