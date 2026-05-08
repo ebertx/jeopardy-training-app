@@ -6,6 +6,7 @@
   import QuestionCard from '$lib/components/QuestionCard.svelte';
   import CategoryFilter from '$lib/components/CategoryFilter.svelte';
   import SessionSummary from '$lib/components/SessionSummary.svelte';
+  import Modal from '$lib/components/Modal.svelte';
 
   const auth = getAuth();
 
@@ -174,12 +175,8 @@
   // --- Keyboard shortcuts ---
   function handleKeydown(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-
-    if (showEndConfirm) {
-      if (e.code === 'Escape') showEndConfirm = false;
-      return;
-    }
-    if (showSessionSummary) return;
+    // Modals own Escape and focus trap themselves; don't process answer keys while open.
+    if (showEndConfirm || showSessionSummary) return;
 
     if (e.code === 'Space' && !showAnswer) {
       e.preventDefault();
@@ -329,17 +326,8 @@
 
 <!-- End session confirmation -->
 {#if showEndConfirm}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
-    onclick={(e) => { if (e.target === e.currentTarget) showEndConfirm = false; }}
-    role="presentation"
-  >
-    <div
-      class="w-full max-w-sm rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="end-session-title"
-    >
+  <Modal onclose={() => (showEndConfirm = false)} ariaLabelledby="end-session-title">
+    <div class="rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4">
       <h2 id="end-session-title" class="text-lg font-bold text-gray-800">End Session?</h2>
       <p class="text-sm text-gray-600">This will complete your current quiz session and show a summary.</p>
       <div class="flex gap-3">
@@ -357,7 +345,7 @@
         </button>
       </div>
     </div>
-  </div>
+  </Modal>
 {/if}
 
 <!-- Session summary modal -->

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Modal from './Modal.svelte';
+
   let {
     summary,
     onclose,
@@ -18,17 +20,11 @@
   }
 </script>
 
-<!-- Overlay -->
-<div
-  class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
-  role="dialog"
-  aria-modal="true"
-  aria-label="Session summary"
->
-  <div class="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
+<Modal {onclose} ariaLabelledby="session-summary-title">
+  <div class="rounded-2xl bg-white shadow-2xl overflow-hidden">
     <!-- Header -->
     <div class="bg-jeopardy-blue px-6 py-5 text-center">
-      <h2 class="text-xl font-bold text-jeopardy-gold">Session Complete!</h2>
+      <h2 id="session-summary-title" class="text-xl font-bold text-jeopardy-gold">Session Complete!</h2>
     </div>
 
     <!-- Body -->
@@ -63,4 +59,4 @@
       </button>
     </div>
   </div>
-</div>
+</Modal>

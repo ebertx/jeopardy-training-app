@@ -6,6 +6,7 @@
   import QuestionCard from '$lib/components/QuestionCard.svelte';
   import CategoryFilter from '$lib/components/CategoryFilter.svelte';
   import MasteryBadge from '$lib/components/MasteryBadge.svelte';
+  import Modal from '$lib/components/Modal.svelte';
 
   const auth = getAuth();
 
@@ -47,6 +48,7 @@
   let showAnswer = $state(false);
   let submitting = $state(false);
   let sessionId = $state<number | null>(null);
+  let showEndConfirm = $state(false);
 
   // Sorted: closest to mastery first (highest consecutive_correct)
   let sortedItems = $derived(
@@ -136,6 +138,7 @@
   }
 
   async function endSession() {
+    showEndConfirm = false;
     await fetchReviewItems();
     inSession = false;
     sessionItems = [];
@@ -148,6 +151,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (!inSession) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    if (showEndConfirm) return; // Modal owns Escape and focus
 
     if (e.code === 'Space' && !showAnswer) {
       e.preventDefault();
@@ -181,7 +185,7 @@
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold text-jeopardy-blue">Review Session</h1>
         <button
-          onclick={endSession}
+          onclick={() => (showEndConfirm = true)}
           class="px-4 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
         >
           End Session
@@ -344,3 +348,27 @@
 
   </div>
 </div>
+
+<!-- End review session confirmation -->
+{#if showEndConfirm}
+  <Modal onclose={() => (showEndConfirm = false)} ariaLabelledby="end-review-title">
+    <div class="rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4">
+      <h2 id="end-review-title" class="text-lg font-bold text-gray-800">End Session?</h2>
+      <p class="text-sm text-gray-600">Your answers so far have already been recorded. You'll return to the review list.</p>
+      <div class="flex gap-3">
+        <button
+          onclick={() => (showEndConfirm = false)}
+          class="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onclick={endSession}
+          class="flex-1 py-2.5 rounded-xl bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
+        >
+          End Session
+        </button>
+      </div>
+    </div>
+  </Modal>
+{/if}
