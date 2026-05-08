@@ -28,7 +28,10 @@
   }
 </script>
 
-<nav class="bg-jeopardy-blue text-jeopardy-gold shadow-md">
+<nav
+  class="bg-jeopardy-blue text-jeopardy-gold shadow-md"
+  style="padding-top: env(safe-area-inset-top); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);"
+>
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
     <div class="flex items-center justify-between h-14">
       <!-- App title -->
