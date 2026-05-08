@@ -29,6 +29,7 @@
   let sessionSummary = $state<any>(null);
   let submitting = $state(false);
   let showEndConfirm = $state(false);
+  let filtersOpen = $state(false);
 
   // Incremented on every filter change; in-flight fetches/prefetches captured
   // before the change discard their results to avoid leaking old-filter data.
@@ -39,6 +40,10 @@
     runningStats.total > 0
       ? Math.round((runningStats.correct / runningStats.total) * 100)
       : 0
+  );
+
+  let activeFilterCount = $derived(
+    (selectedCategory !== 'all' ? 1 : 0) + gameTypeFilters.length
   );
 
   // --- API helpers ---
@@ -207,61 +212,70 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="min-h-screen bg-gray-50 py-6 px-4">
-  <div class="max-w-2xl mx-auto flex flex-col gap-4">
+<div class="min-h-screen bg-gray-50 py-3 sm:py-6 px-4">
+  <div class="max-w-2xl mx-auto flex flex-col gap-3 sm:gap-4">
 
-    <!-- Header row -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <h1 class="text-2xl font-bold text-jeopardy-blue">Quiz</h1>
+    <!-- Header row (single line on mobile) -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <h1 class="text-xl sm:text-2xl font-bold text-jeopardy-blue">Quiz</h1>
 
-      <!-- Running stats -->
       {#if runningStats.total > 0}
         <div class="text-sm font-medium text-gray-600">
-          <span class="text-green-600 font-bold">{runningStats.correct}</span>
-          / {runningStats.total} correct
+          <span class="text-green-600 font-bold">{runningStats.correct}</span>/{runningStats.total}
           (<span class="{accuracy >= 75 ? 'text-green-600' : accuracy >= 50 ? 'text-amber-500' : 'text-red-500'} font-bold">{accuracy}%</span>)
         </div>
       {/if}
 
-      <!-- End session button -->
-      {#if sessionId}
+      <div class="flex items-center gap-2 ml-auto">
         <button
-          onclick={() => (showEndConfirm = true)}
-          class="px-4 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          onclick={() => (filtersOpen = !filtersOpen)}
+          aria-expanded={filtersOpen}
+          class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
         >
-          End Session
+          Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
         </button>
-      {/if}
+
+        {#if sessionId}
+          <button
+            onclick={() => (showEndConfirm = true)}
+            class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            End
+          </button>
+        {/if}
+      </div>
     </div>
 
-    <!-- Filters -->
-    <div class="bg-white rounded-xl shadow-sm px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-4">
-      <div class="flex-1">
-        <p class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Category</p>
-        <CategoryFilter
-          {categories}
-          selected={selectedCategory}
-          onchange={handleCategoryChange}
-        />
-      </div>
+    <!-- Filters (collapsible) -->
+    {#if filtersOpen}
+      <div class="bg-white rounded-xl shadow-sm px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-4">
+        <div class="flex-1">
+          <p class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Category</p>
+          <CategoryFilter
+            {categories}
+            selected={selectedCategory}
+            onchange={handleCategoryChange}
+          />
+        </div>
 
-      <div>
-        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Exclude Game Types</p>
-        <div class="flex flex-wrap gap-3">
-          {#each ['Kids', 'Teen', 'College'] as type}
-            <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={gameTypeFilters.includes(type)}
-                onchange={() => toggleGameTypeFilter(type)}
-                class="w-4 h-4 rounded border-gray-300 text-jeopardy-blue focus:ring-jeopardy-blue"
-              />
-              {type}
-            </label>
-          {/each}
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Exclude Game Types</p>
+          <div class="flex flex-wrap gap-3">
+            {#each ['Kids', 'Teen', 'College'] as type}
+              <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={gameTypeFilters.includes(type)}
+                  onchange={() => toggleGameTypeFilter(type)}
+                  class="w-4 h-4 rounded border-gray-300 text-jeopardy-blue focus:ring-jeopardy-blue"
+                />
+                {type}
+              </label>
+            {/each}
+          </div>
         </div>
       </div>
-    </div>
+    {/if}
 
     <!-- Error banner -->
     {#if error}
