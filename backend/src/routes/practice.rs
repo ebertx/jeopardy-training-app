@@ -124,3 +124,214 @@ pub async fn grade(
         "requeueInSession": out.requeue_in_session,
     })))
 }
+
+use axum::extract::Query;
+use std::collections::HashMap;
+
+/// Start of "today" in the user's IANA timezone, as a UTC instant.
+/// Pure (takes `now`) so it can be unit-tested. Falls back to UTC midnight when
+/// tz is missing or unparseable.
+pub fn day_start_utc(now: DateTime<Utc>, tz: Option<&str>) -> DateTime<Utc> {
+    use chrono::TimeZone;
+    let zone: chrono_tz::Tz = tz.and_then(|s| s.parse().ok()).unwrap_or(chrono_tz::UTC);
+    let local_now = now.with_timezone(&zone);
+    let local_midnight = local_now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight");
+    zone.from_local_datetime(&local_midnight)
+        .earliest()
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or(now)
+}
+
+#[derive(sqlx::FromRow)]
+struct ClueRow {
+    id: i32,
+    question: Option<String>,
+    answer: Option<String>,
+    category: Option<String>,
+    classifier_category: Option<String>,
+    clue_value: Option<i32>,
+    round: Option<i32>,
+    air_date: Option<chrono::NaiveDate>,
+    notes: Option<String>,
+}
+
+fn clue_json(row: ClueRow) -> Value {
+    json!({
+        "id": row.id,
+        "question": row.question,
+        "answer": row.answer,
+        "category": row.category,
+        "classifier_category": row.classifier_category,
+        "clue_value": row.clue_value,
+        "round": row.round,
+        "air_date": row.air_date,
+        "notes": row.notes,
+    })
+}
+
+pub async fn next(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, AppError> {
+    let user_id = auth.user_id;
+
+    // User prefs.
+    let (new_per_day, tz): (i32, Option<String>) =
+        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&state.pool)
+            .await?;
+
+    // Due review count (unsuspended, due now).
+    let due_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM srs_cards
+         WHERE user_id = $1 AND suspended = false AND due <= now()",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    // New cards introduced since local midnight.
+    let day_start = day_start_utc(Utc::now(), tz.as_deref());
+    let new_today: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM srs_cards WHERE user_id = $1 AND created_at >= $2",
+    )
+    .bind(user_id)
+    .bind(day_start)
+    .fetch_one(&state.pool)
+    .await?;
+    let new_remaining = (new_per_day as i64 - new_today).max(0);
+
+    // 1) A due review card takes priority.
+    let review: Option<ClueRow> = sqlx::query_as(
+        "SELECT jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
+                jq.clue_value, jq.round, jq.air_date, jq.notes
+         FROM srs_cards sc
+         JOIN jeopardy_questions jq ON jq.id = sc.question_id
+         WHERE sc.user_id = $1 AND sc.suspended = false AND sc.due <= now()
+           AND jq.archived = false
+         ORDER BY sc.due ASC
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    if let Some(row) = review {
+        return Ok(Json(json!({
+            "done": false, "isNew": false, "card": clue_json(row),
+            "dueCount": due_count, "newRemaining": new_remaining,
+        })));
+    }
+
+    // 2) A new clue, if the daily allowance remains.
+    if new_remaining > 0 {
+        if let Some(row) = pick_new_clue(&state, user_id, &params).await? {
+            return Ok(Json(json!({
+                "done": false, "isNew": true, "card": clue_json(row),
+                "dueCount": due_count, "newRemaining": new_remaining,
+            })));
+        }
+    }
+
+    // 3) Nothing to do.
+    Ok(Json(json!({ "done": true, "dueCount": due_count, "newRemaining": new_remaining })))
+}
+
+async fn pick_new_clue(
+    state: &Arc<AppState>,
+    user_id: i32,
+    params: &HashMap<String, String>,
+) -> Result<Option<ClueRow>, AppError> {
+    let category = params.get("category").map(|s| s.as_str()).unwrap_or("all");
+    let game_types_str = params.get("gameTypes").map(|s| s.as_str()).unwrap_or("");
+    let game_types: Vec<&str> = game_types_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut conditions = vec![
+        "question IS NOT NULL".to_string(),
+        "answer IS NOT NULL".to_string(),
+        "classifier_category IS NOT NULL".to_string(),
+        "air_date IS NOT NULL".to_string(),
+        "archived = false".to_string(),
+        // Exclude clues already in this user's SRS pool.
+        "id NOT IN (SELECT question_id FROM srs_cards WHERE user_id = $1)".to_string(),
+    ];
+
+    let use_category = category != "all";
+    if use_category {
+        conditions.push("classifier_category = $2".to_string());
+    }
+    for gt in &game_types {
+        match *gt {
+            "kids" | "Kids" => conditions
+                .push("NOT (notes ILIKE '%Kids%' OR notes ILIKE '%Kid''s%')".to_string()),
+            "teen" | "Teen" => conditions.push("NOT (notes ILIKE '%Teen%')".to_string()),
+            "college" | "College" => conditions.push("NOT (notes ILIKE '%College%')".to_string()),
+            _ => {}
+        }
+    }
+    let where_clause = conditions.join(" AND ");
+
+    let count_sql = format!("SELECT COUNT(*) FROM jeopardy_questions WHERE {}", where_clause);
+    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql).bind(user_id);
+    if use_category {
+        count_q = count_q.bind(category);
+    }
+    let total: i64 = count_q.fetch_one(&state.pool).await?;
+    if total == 0 {
+        return Ok(None);
+    }
+
+    // Same recency-biased exponential offset used by the legacy quiz picker.
+    use rand::Rng;
+    let r: f64 = rand::rng().random();
+    let lambda = 3.5_f64;
+    let normalized = (-(1.0 - r).ln() / lambda).min(1.0);
+    let offset = (normalized * total as f64).floor() as i64;
+
+    let sql = format!(
+        "SELECT id, question, answer, category, classifier_category, clue_value, round, air_date, notes
+         FROM jeopardy_questions WHERE {} ORDER BY air_date DESC LIMIT 1 OFFSET {}",
+        where_clause, offset
+    );
+    let mut q = sqlx::query_as::<_, ClueRow>(&sql).bind(user_id);
+    if use_category {
+        q = q.bind(category);
+    }
+    Ok(q.fetch_optional(&state.pool).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::day_start_utc;
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn chicago_day_start_is_local_midnight_in_utc() {
+        // 2026-06-30 12:00 UTC; Chicago is UTC-5 (CDT) in summer → local midnight = 05:00 UTC.
+        let now = Utc.with_ymd_and_hms(2026, 6, 30, 12, 0, 0).unwrap();
+        let ds = day_start_utc(now, Some("America/Chicago"));
+        assert_eq!(ds, Utc.with_ymd_and_hms(2026, 6, 30, 5, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn unknown_or_missing_tz_falls_back_to_utc_midnight() {
+        let now = Utc.with_ymd_and_hms(2026, 6, 30, 12, 0, 0).unwrap();
+        assert_eq!(
+            day_start_utc(now, Some("Not/AZone")),
+            Utc.with_ymd_and_hms(2026, 6, 30, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            day_start_utc(now, None),
+            Utc.with_ymd_and_hms(2026, 6, 30, 0, 0, 0).unwrap()
+        );
+    }
+}
