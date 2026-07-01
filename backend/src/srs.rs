@@ -155,16 +155,29 @@ fn step_through_learning(prev: &Prev, rating: Rating) -> Outcome {
                 }
             }
         }
-        Rating::TooEasy => Outcome {
-            state: CardKind::Review,
-            interval_days: EASY_GRADUATING_INTERVAL_DAYS,
-            ease: prev.ease,
-            reps: prev.reps + 1,
-            lapses: prev.lapses,
-            step_index: 0,
-            interval_secs: (EASY_GRADUATING_INTERVAL_DAYS as i64) * DAY_SECS,
-            requeue_in_session: false,
-        },
+        Rating::TooEasy => {
+            // A fresh learning card graduates to the flat easy interval. A
+            // relearning card must not collapse below what a "Got it" would
+            // give it (prev.interval_days), so keep a strict edge over Good and
+            // floor at the easy graduating interval.
+            let interval_days = if prev.state == CardKind::Relearning {
+                (prev.interval_days.max(1.0) * EASY_MULTIPLIER)
+                    .max(EASY_GRADUATING_INTERVAL_DAYS)
+                    .round()
+            } else {
+                EASY_GRADUATING_INTERVAL_DAYS
+            };
+            Outcome {
+                state: CardKind::Review,
+                interval_days,
+                ease: prev.ease,
+                reps: prev.reps + 1,
+                lapses: prev.lapses,
+                step_index: 0,
+                interval_secs: (interval_days as i64) * DAY_SECS,
+                requeue_in_session: false,
+            }
+        }
     }
 }
 
@@ -324,5 +337,39 @@ mod tests {
         assert!(matches!(Rating::from_wire("got_it"), Some(Rating::GotIt)));
         assert!(matches!(Rating::from_wire("too_easy"), Some(Rating::TooEasy)));
         assert!(Rating::from_wire("hard").is_none());
+    }
+
+    #[test]
+    fn mid_learning_wrong_resets_to_first_step() {
+        // A new card advanced to learning step 1, then answered Wrong, must drop
+        // back to step 0 and requeue, without graduating or counting a lapse.
+        let prev = Prev { state: CardKind::Learning, interval_days: 0.0, ease: 2.5, reps: 0, lapses: 0, step_index: 1 };
+        let o = schedule(Some(prev), Rating::Wrong);
+        assert!(matches!(o.state, CardKind::Learning));
+        assert_eq!(o.step_index, 0);
+        assert_eq!(o.interval_secs, 60);
+        assert!(o.requeue_in_session);
+        assert_eq!(o.lapses, 0);
+    }
+
+    #[test]
+    fn relearning_tooeasy_is_at_least_relearning_gotit() {
+        // Easy must never yield a shorter interval than Good on a relearning card.
+        let prev = Prev { state: CardKind::Relearning, interval_days: 10.0, ease: 2.3, reps: 5, lapses: 2, step_index: 0 };
+        let good = schedule(Some(prev.clone()), Rating::GotIt);
+        let easy = schedule(Some(prev), Rating::TooEasy);
+        assert!(matches!(easy.state, CardKind::Review));
+        assert!(easy.interval_days >= good.interval_days);
+        // And strictly beats it here (10 * 1.3 = 13 > 10).
+        assert!(easy.interval_days > good.interval_days);
+        assert_eq!(easy.interval_secs, (easy.interval_days as i64) * 86_400);
+    }
+
+    #[test]
+    fn new_card_tooeasy_still_flat_four_days() {
+        // The relearning fix must not change the fresh-learning Easy graduation.
+        let o = schedule(None, Rating::TooEasy);
+        assert!(matches!(o.state, CardKind::Review));
+        assert_eq!(o.interval_days, 4.0);
     }
 }
