@@ -309,6 +309,67 @@ async fn pick_new_clue(
     Ok(q.fetch_optional(&state.pool).await?)
 }
 
+pub async fn status(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let user_id = auth.user_id;
+
+    let (new_per_day, tz): (i32, Option<String>) =
+        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&state.pool)
+            .await?;
+
+    let due_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM srs_cards WHERE user_id = $1 AND suspended = false AND due <= now()",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let day_start = day_start_utc(Utc::now(), tz.as_deref());
+    let new_today: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM srs_cards WHERE user_id = $1 AND created_at >= $2",
+    )
+    .bind(user_id)
+    .bind(day_start)
+    .fetch_one(&state.pool)
+    .await?;
+    let new_remaining = (new_per_day as i64 - new_today).max(0);
+
+    let reviewed_today: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM question_attempts WHERE user_id = $1 AND answered_at >= $2",
+    )
+    .bind(user_id)
+    .bind(day_start)
+    .fetch_one(&state.pool)
+    .await?;
+
+    // 14-day due forecast (calendar day in UTC; good enough for a bar chart).
+    let forecast: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
+        "SELECT (due AT TIME ZONE 'UTC')::date AS d, COUNT(*)
+         FROM srs_cards
+         WHERE user_id = $1 AND suspended = false
+           AND due < now() + interval '14 days'
+         GROUP BY d ORDER BY d",
+    )
+    .bind(user_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let forecast_json: Vec<Value> = forecast
+        .into_iter()
+        .map(|(d, c)| json!({ "date": d, "count": c }))
+        .collect();
+
+    Ok(Json(json!({
+        "dueCount": due_count,
+        "newRemaining": new_remaining,
+        "reviewedToday": reviewed_today,
+        "forecast": forecast_json,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::day_start_utc;

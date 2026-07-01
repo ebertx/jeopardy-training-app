@@ -13,16 +13,15 @@ use crate::AppState;
 
 #[derive(Debug, FromRow)]
 struct ReviewRow {
-    pub id: i32,
-    pub question: Option<String>,
-    pub answer: Option<String>,
-    pub category: Option<String>,
-    pub classifier_category: Option<String>,
-    pub clue_value: Option<i32>,
-    pub round: Option<i32>,
-    pub air_date: Option<chrono::NaiveDate>,
-    pub consecutive_correct: i32,
-    pub mastered: bool,
+    id: i32,
+    question: Option<String>,
+    answer: Option<String>,
+    category: Option<String>,
+    classifier_category: Option<String>,
+    clue_value: Option<i32>,
+    round: Option<i32>,
+    air_date: Option<chrono::NaiveDate>,
+    reps: i32,
 }
 
 pub async fn list(
@@ -34,52 +33,29 @@ pub async fn list(
     let category = params.get("category").map(|s| s.as_str()).unwrap_or("all");
     let use_category = category != "all";
 
-    let sql = if use_category {
-        "SELECT DISTINCT ON (jq.id)
-          jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
-          jq.clue_value, jq.round, jq.air_date,
-          COALESCE(qm.consecutive_correct, 0) as consecutive_correct,
-          COALESCE(qm.mastered, false) as mastered
-        FROM question_attempts qa
-        JOIN jeopardy_questions jq ON qa.question_id = jq.id
-        LEFT JOIN question_mastery qm ON qm.question_id = jq.id AND qm.user_id = qa.user_id
-        WHERE qa.user_id = $1
-          AND qa.correct = false
-          AND jq.archived = false
-          AND COALESCE(qm.mastered, false) = false
-          AND jq.classifier_category = $2
-        ORDER BY jq.id, COALESCE(qm.consecutive_correct, 0) DESC"
-    } else {
-        "SELECT DISTINCT ON (jq.id)
-          jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
-          jq.clue_value, jq.round, jq.air_date,
-          COALESCE(qm.consecutive_correct, 0) as consecutive_correct,
-          COALESCE(qm.mastered, false) as mastered
-        FROM question_attempts qa
-        JOIN jeopardy_questions jq ON qa.question_id = jq.id
-        LEFT JOIN question_mastery qm ON qm.question_id = jq.id AND qm.user_id = qa.user_id
-        WHERE qa.user_id = $1
-          AND qa.correct = false
-          AND jq.archived = false
-          AND COALESCE(qm.mastered, false) = false
-        ORDER BY jq.id, COALESCE(qm.consecutive_correct, 0) DESC"
-    };
+    // "Review" = SRS cards you're still learning (not yet at the mastered interval),
+    // soonest-due first.
+    let base = "SELECT jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
+                       jq.clue_value, jq.round, jq.air_date, sc.reps
+                FROM srs_cards sc
+                JOIN jeopardy_questions jq ON jq.id = sc.question_id
+                WHERE sc.user_id = $1 AND sc.suspended = false AND jq.archived = false
+                  AND NOT (sc.state = 'review' AND sc.interval_days >= 21)";
 
-    let mut rows: Vec<ReviewRow> = if use_category {
-        sqlx::query_as::<_, ReviewRow>(sql)
+    let rows: Vec<ReviewRow> = if use_category {
+        let sql = format!("{base} AND jq.classifier_category = $2 ORDER BY sc.due ASC LIMIT 200");
+        sqlx::query_as::<_, ReviewRow>(&sql)
             .bind(user_id)
             .bind(category)
             .fetch_all(&state.pool)
             .await?
     } else {
-        sqlx::query_as::<_, ReviewRow>(sql)
+        let sql = format!("{base} ORDER BY sc.due ASC LIMIT 200");
+        sqlx::query_as::<_, ReviewRow>(&sql)
             .bind(user_id)
             .fetch_all(&state.pool)
             .await?
     };
-
-    // Sort by consecutive_correct DESC (closest to mastery first)
-    rows.sort_by(|a, b| b.consecutive_correct.cmp(&a.consecutive_correct));
 
     let result: Vec<Value> = rows
         .into_iter()
@@ -96,7 +72,7 @@ pub async fn list(
                     "air_date": row.air_date,
                 },
                 "masteryProgress": {
-                    "consecutive_correct": row.consecutive_correct,
+                    "consecutive_correct": row.reps,
                     "required": 3,
                 }
             })

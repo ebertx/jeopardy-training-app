@@ -22,7 +22,7 @@ struct MasteredRow {
     pub clue_value: Option<i32>,
     pub round: Option<i32>,
     pub air_date: Option<chrono::NaiveDate>,
-    pub mastered_at: Option<chrono::NaiveDateTime>,
+    pub mastered_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub async fn random_mastered(
@@ -37,10 +37,11 @@ pub async fn random_mastered(
     let rows: Vec<MasteredRow> = if use_category {
         sqlx::query_as::<_, MasteredRow>(
             "SELECT jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
-              jq.clue_value, jq.round, jq.air_date, qm.mastered_at
-            FROM question_mastery qm
-            JOIN jeopardy_questions jq ON qm.question_id = jq.id
-            WHERE qm.user_id = $1 AND qm.mastered = true AND jq.archived = false
+              jq.clue_value, jq.round, jq.air_date, sc.last_review AS mastered_at
+            FROM srs_cards sc
+            JOIN jeopardy_questions jq ON jq.id = sc.question_id
+            WHERE sc.user_id = $1 AND sc.state = 'review' AND sc.interval_days >= 21
+              AND jq.archived = false
               AND jq.classifier_category = $2",
         )
         .bind(user_id)
@@ -50,10 +51,11 @@ pub async fn random_mastered(
     } else {
         sqlx::query_as::<_, MasteredRow>(
             "SELECT jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
-              jq.clue_value, jq.round, jq.air_date, qm.mastered_at
-            FROM question_mastery qm
-            JOIN jeopardy_questions jq ON qm.question_id = jq.id
-            WHERE qm.user_id = $1 AND qm.mastered = true AND jq.archived = false",
+              jq.clue_value, jq.round, jq.air_date, sc.last_review AS mastered_at
+            FROM srs_cards sc
+            JOIN jeopardy_questions jq ON jq.id = sc.question_id
+            WHERE sc.user_id = $1 AND sc.state = 'review' AND sc.interval_days >= 21
+              AND jq.archived = false",
         )
         .bind(user_id)
         .fetch_all(&state.pool)
@@ -97,7 +99,8 @@ pub async fn reset(
     let user_id = auth.user_id;
 
     sqlx::query(
-        "UPDATE question_mastery SET consecutive_correct = 0, mastered = false, mastered_at = NULL
+        "UPDATE srs_cards
+         SET state = 'learning', interval_days = 0, ease = 2.5, reps = 0, step_index = 0, due = now()
          WHERE user_id = $1 AND question_id = $2",
     )
     .bind(user_id)
