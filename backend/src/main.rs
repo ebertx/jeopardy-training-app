@@ -63,6 +63,7 @@ async fn run() {
         .route("/api/quiz/random", get(routes::quiz::random))
         .route("/api/quiz/submit", post(routes::quiz::submit))
         .route("/api/quiz/complete", post(routes::quiz::complete))
+        .route("/api/practice/grade", post(routes::practice::grade))
         .route("/api/review", get(routes::review::list))
         .route("/api/mastered", get(routes::mastery::random_mastered))
         .route("/api/mastery/reset", post(routes::mastery::reset))

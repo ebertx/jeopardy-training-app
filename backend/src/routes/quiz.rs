@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
-use crate::models::mastery::QuestionMastery;
 use crate::models::question::Question;
 use crate::AppState;
 
@@ -154,88 +153,6 @@ pub async fn submit(
     .fetch_one(&state.pool)
     .await?;
     let attempt_id = attempt_row.0;
-
-    // Get existing mastery record
-    let existing_mastery: Option<QuestionMastery> = sqlx::query_as(
-        "SELECT * FROM question_mastery WHERE user_id = $1 AND question_id = $2",
-    )
-    .bind(user_id)
-    .bind(body.question_id)
-    .fetch_optional(&state.pool)
-    .await?;
-
-    // Calculate new streak and mastery state
-    let (new_streak, new_mastered) = if body.correct {
-        let prev_streak = existing_mastery.as_ref().map(|m| m.consecutive_correct).unwrap_or(0);
-        let streak = prev_streak + 1;
-        let mastered = streak >= 3;
-        (streak, mastered)
-    } else {
-        (0, false)
-    };
-
-    // Determine mastered_at:
-    // - If newly mastered: NOW()
-    // - If unmastered (was mastered, now not): NULL
-    // - If already mastered and staying mastered: keep existing value
-    // - If never mastered and still not: NULL
-    let was_mastered = existing_mastery.as_ref().map(|m| m.mastered).unwrap_or(false);
-    let newly_mastered = new_mastered && !was_mastered;
-    let still_mastered = new_mastered && was_mastered;
-
-    if newly_mastered {
-        // Set mastered_at to NOW()
-        sqlx::query(
-            "INSERT INTO question_mastery (user_id, question_id, consecutive_correct, mastered, mastered_at, last_attempt_at)
-             VALUES ($1, $2, $3, $4, NOW(), NOW())
-             ON CONFLICT (user_id, question_id) DO UPDATE SET
-               consecutive_correct = EXCLUDED.consecutive_correct,
-               mastered = EXCLUDED.mastered,
-               mastered_at = NOW(),
-               last_attempt_at = NOW()",
-        )
-        .bind(user_id)
-        .bind(body.question_id)
-        .bind(new_streak)
-        .bind(new_mastered)
-        .execute(&state.pool)
-        .await?;
-    } else if still_mastered {
-        // Keep existing mastered_at
-        sqlx::query(
-            "INSERT INTO question_mastery (user_id, question_id, consecutive_correct, mastered, mastered_at, last_attempt_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             ON CONFLICT (user_id, question_id) DO UPDATE SET
-               consecutive_correct = EXCLUDED.consecutive_correct,
-               mastered = EXCLUDED.mastered,
-               mastered_at = question_mastery.mastered_at,
-               last_attempt_at = NOW()",
-        )
-        .bind(user_id)
-        .bind(body.question_id)
-        .bind(new_streak)
-        .bind(new_mastered)
-        .bind(existing_mastery.as_ref().and_then(|m| m.mastered_at))
-        .execute(&state.pool)
-        .await?;
-    } else {
-        // mastered_at = NULL (unmastered or never mastered)
-        sqlx::query(
-            "INSERT INTO question_mastery (user_id, question_id, consecutive_correct, mastered, mastered_at, last_attempt_at)
-             VALUES ($1, $2, $3, $4, NULL, NOW())
-             ON CONFLICT (user_id, question_id) DO UPDATE SET
-               consecutive_correct = EXCLUDED.consecutive_correct,
-               mastered = EXCLUDED.mastered,
-               mastered_at = NULL,
-               last_attempt_at = NOW()",
-        )
-        .bind(user_id)
-        .bind(body.question_id)
-        .bind(new_streak)
-        .bind(new_mastered)
-        .execute(&state.pool)
-        .await?;
-    }
 
     Ok(Json(json!({
         "success": true,
