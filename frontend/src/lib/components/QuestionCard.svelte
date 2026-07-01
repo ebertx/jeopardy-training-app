@@ -13,6 +13,9 @@
     onRevealAnswer,
     onCorrect,
     onIncorrect,
+    onWrong,
+    onGotIt,
+    onTooEasy,
     badge,
     additionalActions,
     cardBgColor = 'bg-jeopardy-blue',
@@ -28,8 +31,11 @@
     airDate?: string | null;
     showAnswer: boolean;
     onRevealAnswer: () => void;
-    onCorrect: () => void;
-    onIncorrect: () => void;
+    onCorrect?: () => void;
+    onIncorrect?: () => void;
+    onWrong?: () => void;
+    onGotIt?: () => void;
+    onTooEasy?: () => void;
     badge?: Snippet;
     additionalActions?: Snippet;
     cardBgColor?: string;
@@ -73,23 +79,50 @@
         <p class="text-gray-900 font-bold text-xl">{answer}</p>
       </div>
 
-      <!-- Correct / Incorrect buttons -->
-      <div class="flex gap-3">
-        <button
-          onclick={onIncorrect}
-          disabled={submitting}
-          class="flex-1 py-3 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors"
-        >
-          ← Incorrect
-        </button>
-        <button
-          onclick={onCorrect}
-          disabled={submitting}
-          class="flex-1 py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors"
-        >
-          Correct →
-        </button>
-      </div>
+      {#if onGotIt}
+        <!-- 3-button SRS grading -->
+        <div class="grid grid-cols-3 gap-2">
+          <button
+            onclick={onWrong}
+            disabled={submitting}
+            class="py-3 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors"
+          >
+            Wrong
+          </button>
+          <button
+            onclick={onGotIt}
+            disabled={submitting}
+            class="py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors"
+          >
+            Got it
+          </button>
+          <button
+            onclick={onTooEasy}
+            disabled={submitting}
+            class="py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors"
+          >
+            Too easy
+          </button>
+        </div>
+      {:else}
+        <!-- Legacy correct / incorrect (review + mastered pages) -->
+        <div class="flex gap-3">
+          <button
+            onclick={onIncorrect}
+            disabled={submitting}
+            class="flex-1 py-3 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors"
+          >
+            ← Incorrect
+          </button>
+          <button
+            onclick={onCorrect}
+            disabled={submitting}
+            class="flex-1 py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-lg transition-colors"
+          >
+            Correct →
+          </button>
+        </div>
+      {/if}
 
       <!-- Additional actions slot -->
       {#if additionalActions}
