@@ -27,6 +27,7 @@ model jeopardy_questions {
   archived_at         DateTime?           @db.Timestamp(6)
   question_attempts   question_attempts[]
   question_mastery    question_mastery[]
+  srs_cards           srs_cards[]
 
   @@index([archived])
   @@index([archived, air_date(sort: Desc)])
@@ -49,6 +50,9 @@ model users {
   study_recommendations study_recommendations[]
   coryat_games          coryat_games[]
   auth_sessions         auth_sessions[]
+  new_cards_per_day     Int                      @default(20)
+  timezone              String?
+  srs_cards             srs_cards[]
 
   @@index([approved])
   @@index([role])
@@ -133,6 +137,29 @@ model coryat_games {
   @@index([user_id])
   @@index([completed_at])
   @@index([user_id, completed_at])
+}
+
+model srs_cards {
+  id            Int                @id @default(autoincrement())
+  user_id       Int
+  question_id   Int
+  state         String             @default("learning")
+  interval_days Float              @default(0)
+  ease          Float              @default(2.5)
+  due           DateTime           @default(now()) @db.Timestamptz(6)
+  last_review   DateTime?          @db.Timestamptz(6)
+  reps          Int                @default(0)
+  lapses        Int                @default(0)
+  step_index    Int                @default(0) @db.SmallInt
+  suspended     Boolean            @default(false)
+  created_at    DateTime           @default(now()) @db.Timestamptz(6)
+  user          users              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  question      jeopardy_questions @relation(fields: [question_id], references: [id])
+
+  @@unique([user_id, question_id])
+  @@index([user_id, due])
+  @@index([user_id, suspended, due])
+  @@index([user_id, created_at])
 }
 
 // NextAuth database sessions for persistent login (especially iOS PWA)
