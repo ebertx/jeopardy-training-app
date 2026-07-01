@@ -13,24 +13,31 @@ pub async fn get(
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
 
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT game_type_filters FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_one(&state.pool)
-            .await?;
+    let row: (Option<String>, i32, Option<String>) = sqlx::query_as(
+        "SELECT game_type_filters, new_cards_per_day, timezone FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
 
     let filters: Vec<Value> = match row.0 {
         Some(s) if !s.is_empty() => serde_json::from_str(&s).unwrap_or_default(),
         _ => vec![],
     };
 
-    Ok(Json(json!({ "gameTypeFilters": filters })))
+    Ok(Json(json!({
+        "gameTypeFilters": filters,
+        "newCardsPerDay": row.1,
+        "timezone": row.2,
+    })))
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePreferencesBody {
     pub game_type_filters: Vec<String>,
+    pub new_cards_per_day: Option<i32>,
+    pub timezone: Option<String>,
 }
 
 pub async fn update(
@@ -48,6 +55,22 @@ pub async fn update(
         .bind(user_id)
         .execute(&state.pool)
         .await?;
+
+    if let Some(n) = body.new_cards_per_day {
+        let n = n.clamp(0, 500);
+        sqlx::query("UPDATE users SET new_cards_per_day = $1 WHERE id = $2")
+            .bind(n)
+            .bind(user_id)
+            .execute(&state.pool)
+            .await?;
+    }
+    if let Some(tz) = body.timezone.as_ref() {
+        sqlx::query("UPDATE users SET timezone = $1 WHERE id = $2")
+            .bind(tz)
+            .bind(user_id)
+            .execute(&state.pool)
+            .await?;
+    }
 
     Ok(Json(json!({ "success": true })))
 }
