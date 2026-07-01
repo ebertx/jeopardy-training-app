@@ -16,7 +16,10 @@
 
   // --- State ---
   let question = $state<any>(null);
-  let prefetchedQuestion = $state<any>(null);
+  let isNew = $state(false);
+  let dueCount = $state(0);
+  let newRemaining = $state(0);
+  let done = $state(false);
   let showAnswer = $state(false);
   let loading = $state(true);
   let error = $state('');
@@ -59,10 +62,18 @@
     loading = true;
     error = '';
     try {
-      const params = buildQuizParams();
-      const q = await api.get(`/api/quiz/random?${params}`);
+      const res = await api.get(`/api/practice/next?${buildQuizParams()}`);
       if (gen !== filterGen) return;
-      question = q;
+      dueCount = res.dueCount ?? 0;
+      newRemaining = res.newRemaining ?? 0;
+      if (res.done) {
+        done = true;
+        question = null;
+      } else {
+        done = false;
+        isNew = res.isNew;
+        question = res.card;
+      }
     } catch (err: any) {
       if (gen !== filterGen) return;
       error = err?.message ?? 'Failed to load question';
@@ -71,40 +82,20 @@
     }
   }
 
-  function prefetchNextQuestion() {
-    const gen = filterGen;
-    const params = buildQuizParams();
-    fetch(`/api/quiz/random?${params}`, { credentials: 'same-origin', cache: 'no-store' })
-      .then((r) => r.json())
-      .then((q) => {
-        if (gen === filterGen) {
-          prefetchedQuestion = q;
-        }
-      })
-      .catch(() => {});
-  }
-
-  async function handleAnswer(correct: boolean) {
-    if (submitting) return;
+  async function handleGrade(rating: 'wrong' | 'got_it' | 'too_easy') {
+    if (submitting || !question) return;
     submitting = true;
     try {
-      const result = await api.post('/api/quiz/submit', {
+      const result = await api.post('/api/practice/grade', {
         questionId: question.id,
-        correct,
+        rating,
         sessionId,
-        isReviewSession: false,
       });
       sessionId = result.sessionId;
       runningStats.total++;
-      if (correct) runningStats.correct++;
-
-      if (prefetchedQuestion) {
-        question = prefetchedQuestion;
-        prefetchedQuestion = null;
-      } else {
-        await fetchQuestion();
-      }
+      if (rating !== 'wrong') runningStats.correct++;
       showAnswer = false;
+      await fetchQuestion();
     } catch (err: any) {
       error = err?.message ?? 'Failed to submit answer';
     } finally {
@@ -119,12 +110,7 @@
         reason: 'Missing media or problematic question',
       });
       // Move to next question
-      if (prefetchedQuestion) {
-        question = prefetchedQuestion;
-        prefetchedQuestion = null;
-      } else {
-        await fetchQuestion();
-      }
+      await fetchQuestion();
       showAnswer = false;
     } catch (err: any) {
       error = err?.message ?? 'Failed to archive question';
@@ -159,9 +145,8 @@
   async function handleCategoryChange(value: string) {
     selectedCategory = value;
     filterGen++;
-    prefetchedQuestion = null;
-    showAnswer = false;
     await fetchQuestion();
+    showAnswer = false;
   }
 
   function toggleGameTypeFilter(type: string) {
@@ -172,9 +157,8 @@
     }
     savePreferences();
     filterGen++;
-    prefetchedQuestion = null;
-    showAnswer = false;
     fetchQuestion();
+    showAnswer = false;
   }
 
   // --- Keyboard shortcuts ---
@@ -186,11 +170,10 @@
     if (e.code === 'Space' && !showAnswer) {
       e.preventDefault();
       showAnswer = true;
-      prefetchNextQuestion();
-    } else if (e.code === 'ArrowRight' && showAnswer && !submitting) {
-      handleAnswer(true);
-    } else if (e.code === 'ArrowLeft' && showAnswer && !submitting) {
-      handleAnswer(false);
+    } else if (showAnswer && !submitting) {
+      if (e.code === 'Digit1') handleGrade('wrong');
+      else if (e.code === 'Digit2') handleGrade('got_it');
+      else if (e.code === 'Digit3') handleGrade('too_easy');
     }
   }
 
@@ -217,7 +200,12 @@
 
     <!-- Header row (single line on mobile) -->
     <div class="flex items-center gap-2 flex-wrap">
-      <h1 class="text-xl sm:text-2xl font-bold text-jeopardy-blue">Quiz</h1>
+      <h1 class="text-xl sm:text-2xl font-bold text-jeopardy-blue">Practice</h1>
+
+      <div class="text-sm font-medium text-gray-600">
+        Due <span class="font-bold text-jeopardy-blue">{dueCount}</span>
+        · New left <span class="font-bold text-jeopardy-blue">{newRemaining}</span>
+      </div>
 
       {#if runningStats.total > 0}
         <div class="text-sm font-medium text-gray-600">
@@ -301,12 +289,10 @@
           round={question.round ?? null}
           airDate={question.air_date ?? question.airDate ?? null}
           {showAnswer}
-          onRevealAnswer={() => {
-            showAnswer = true;
-            prefetchNextQuestion();
-          }}
-          onCorrect={() => handleAnswer(true)}
-          onIncorrect={() => handleAnswer(false)}
+          onRevealAnswer={() => { showAnswer = true; }}
+          onWrong={() => handleGrade('wrong')}
+          onGotIt={() => handleGrade('got_it')}
+          onTooEasy={() => handleGrade('too_easy')}
           {submitting}
         >
           {#snippet additionalActions()}
@@ -327,10 +313,15 @@
         {#if !showAnswer}
           Press <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Space</kbd> to reveal answer
         {:else}
-          <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">←</kbd> Incorrect &nbsp;
-          <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">→</kbd> Correct
+          <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">1</kbd> Wrong &nbsp;
+          <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">2</kbd> Got it &nbsp;
+          <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">3</kbd> Too easy
         {/if}
       </p>
+    {:else if done}
+      <div class="text-center py-16 text-gray-600">
+        🎉 All caught up — no reviews due and today's new-clue limit is reached.
+      </div>
     {:else}
       <div class="text-center py-16 text-gray-500">No questions available for the selected filters.</div>
     {/if}
