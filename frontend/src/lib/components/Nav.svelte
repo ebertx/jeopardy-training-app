@@ -6,7 +6,7 @@
   let menuOpen = $state(false);
 
   const links = [
-    { href: '/quiz', label: 'Quiz' },
+    { href: '/practice', label: 'Practice' },
     { href: '/coryat', label: 'Coryat' },
     { href: '/review', label: 'Review' },
     { href: '/mastered', label: 'Mastered' },

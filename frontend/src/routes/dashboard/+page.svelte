@@ -23,6 +23,8 @@
   let error = $state('');
   let includeReviewed = $state(false);
 
+  let srs = $state<{ dueCount: number; newRemaining: number; reviewedToday: number; forecast: Array<{ date: string; count: number }> } | null>(null);
+
   async function fetchStats() {
     loading = true;
     error = '';
@@ -37,6 +39,7 @@
 
   onMount(() => {
     fetchStats();
+    api.get('/api/practice/status').then((s) => (srs = s)).catch(() => (srs = null));
   });
 
   // Re-fetch when toggle changes (but not on initial mount)
@@ -138,13 +141,37 @@
       </label>
     </div>
 
+    <!-- SRS Practice Summary -->
+    {#if srs}
+      <div class="bg-white rounded-xl shadow-sm p-5 flex flex-wrap gap-8 mb-8">
+        <div>
+          <p class="text-3xl font-bold text-jeopardy-blue">{srs.dueCount}</p>
+          <p class="text-xs uppercase text-gray-500">Due today</p>
+        </div>
+        <div>
+          <p class="text-3xl font-bold text-jeopardy-blue">{srs.newRemaining}</p>
+          <p class="text-xs uppercase text-gray-500">New left</p>
+        </div>
+        <div>
+          <p class="text-3xl font-bold text-jeopardy-blue">{srs.reviewedToday}</p>
+          <p class="text-xs uppercase text-gray-500">Reviewed today</p>
+        </div>
+        <a
+          href="/practice"
+          class="ml-auto self-center px-4 py-2 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
+        >
+          Practice &rarr;
+        </a>
+      </div>
+    {/if}
+
     <!-- Action Buttons -->
     <div class="flex flex-wrap gap-3 mb-8">
       <a
-        href="/quiz"
+        href="/practice"
         class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors"
       >
-        Quiz
+        Practice
       </a>
       <a
         href="/review"

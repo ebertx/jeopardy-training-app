@@ -2,12 +2,45 @@
   import { getAuth } from '$lib/auth.svelte';
   import { goto } from '$app/navigation';
   import { logout } from '$lib/auth.svelte';
+  import { api } from '$lib/api';
+  import { onMount } from 'svelte';
 
   const auth = getAuth();
 
   $effect(() => {
     if (!auth.loading && !auth.user) goto('/login');
   });
+
+  // SRS preferences
+  let gameTypeFilters = $state<string[]>([]);
+  let newCardsPerDay = $state(20);
+  let timezone = $state('');
+  let srsSaved = $state(false);
+
+  onMount(async () => {
+    try {
+      const prefs = await api.get('/api/preferences');
+      gameTypeFilters = prefs?.gameTypeFilters ?? [];
+      newCardsPerDay = prefs?.newCardsPerDay ?? 20;
+      timezone = prefs?.timezone ?? '';
+    } catch {
+      // ignore; keep defaults
+    }
+  });
+
+  async function saveSrsPrefs() {
+    srsSaved = false;
+    try {
+      await api.put('/api/preferences', {
+        gameTypeFilters,
+        newCardsPerDay,
+        timezone,
+      });
+      srsSaved = true;
+    } catch {
+      // ignore save errors here; controls simply won't persist
+    }
+  }
 </script>
 
 <div class="min-h-screen bg-gray-50 py-8 px-4">
@@ -41,6 +74,38 @@
             </span>
           </div>
         </div>
+      </div>
+
+      <!-- SRS Practice Preferences -->
+      <div class="bg-white rounded-xl shadow p-6 flex flex-col gap-4">
+        <h2 class="text-lg font-semibold text-gray-800 border-b border-gray-100 pb-3">Practice</h2>
+
+        <label class="block">
+          <span class="text-sm font-semibold text-gray-700">New clues per day</span>
+          <input
+            type="number"
+            min="0"
+            max="500"
+            bind:value={newCardsPerDay}
+            onchange={saveSrsPrefs}
+            class="mt-1 w-32 rounded-lg border border-gray-300 px-3 py-2"
+          />
+        </label>
+
+        <label class="block">
+          <span class="text-sm font-semibold text-gray-700">Timezone (IANA)</span>
+          <input
+            type="text"
+            placeholder="America/Chicago"
+            bind:value={timezone}
+            onchange={saveSrsPrefs}
+            class="mt-1 w-64 rounded-lg border border-gray-300 px-3 py-2"
+          />
+        </label>
+
+        {#if srsSaved}
+          <p class="text-sm text-green-600">Saved</p>
+        {/if}
       </div>
 
       <!-- Admin Link -->
