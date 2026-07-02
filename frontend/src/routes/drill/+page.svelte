@@ -142,11 +142,19 @@
           <span class="font-bold text-jeopardy-blue">{remaining}</span> to hit now
         </div>
       {/if}
-      {#if runningStats.total > 0}
-        <div class="text-sm text-gray-500 ml-auto">
-          {runningStats.correct}/{runningStats.total} ({accuracy}%)
-        </div>
-      {/if}
+      <div class="flex items-center gap-2 ml-auto">
+        {#if runningStats.total > 0}
+          <div class="text-sm text-gray-500">
+            {runningStats.correct}/{runningStats.total} ({accuracy}%)
+          </div>
+        {/if}
+        <button
+          onclick={() => goto('/dashboard')}
+          class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+        >
+          Done
+        </button>
+      </div>
     </div>
 
     <!-- Search + filters -->

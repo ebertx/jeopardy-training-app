@@ -241,7 +241,7 @@
         <h1 class="text-xl sm:text-2xl font-bold text-white">{roundName}</h1>
         <p class="text-yellow-300 text-sm font-semibold mt-0.5">Score: ${currentScore.toLocaleString()}</p>
       </div>
-      <a href="/coryat" class="text-gray-400 hover:text-white text-sm transition-colors">Exit</a>
+      <a href="/dashboard" class="text-gray-400 hover:text-white text-sm transition-colors">Exit</a>
     </div>
 
     {#if error}

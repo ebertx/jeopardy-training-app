@@ -108,11 +108,19 @@
   <div class="max-w-2xl mx-auto flex flex-col gap-4">
 
     <!-- Header -->
-    <div class="bg-green-700 rounded-xl px-6 py-4 text-white">
-      <h1 class="text-2xl font-bold">Mastered Questions Review</h1>
-      {#if masteredQuestion?.total_mastered}
-        <p class="text-green-200 text-sm mt-1">{masteredQuestion.total_mastered} mastered question{masteredQuestion.total_mastered === 1 ? '' : 's'}</p>
-      {/if}
+    <div class="bg-green-700 rounded-xl px-6 py-4 text-white flex items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold">Mastered Questions Review</h1>
+        {#if masteredQuestion?.total_mastered}
+          <p class="text-green-200 text-sm mt-1">{masteredQuestion.total_mastered} mastered question{masteredQuestion.total_mastered === 1 ? '' : 's'}</p>
+        {/if}
+      </div>
+      <button
+        onclick={() => goto('/dashboard')}
+        class="shrink-0 px-3 py-1.5 rounded-lg border border-white/40 text-sm text-white hover:bg-white/10 transition-colors"
+      >
+        Done
+      </button>
     </div>
 
     <!-- Category filter -->

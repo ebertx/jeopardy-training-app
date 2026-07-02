@@ -252,14 +252,22 @@
       <!-- ===== LIST VIEW ===== -->
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold text-jeopardy-blue">Review</h1>
-        {#if reviewItems.length > 0}
+        <div class="flex items-center gap-2">
+          {#if reviewItems.length > 0}
+            <button
+              onclick={startSession}
+              class="px-4 py-2 bg-jeopardy-blue text-white text-sm font-semibold rounded-lg hover:bg-blue-800 transition-colors"
+            >
+              Start Review Session
+            </button>
+          {/if}
           <button
-            onclick={startSession}
-            class="px-4 py-2 bg-jeopardy-blue text-white text-sm font-semibold rounded-lg hover:bg-blue-800 transition-colors"
+            onclick={() => goto('/dashboard')}
+            class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
           >
-            Start Review Session
+            Done
           </button>
-        {/if}
+        </div>
       </div>
 
       <!-- Category filter -->

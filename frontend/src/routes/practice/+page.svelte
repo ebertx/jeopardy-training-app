@@ -223,14 +223,12 @@
           Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
         </button>
 
-        {#if sessionId}
-          <button
-            onclick={() => (showEndConfirm = true)}
-            class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-          >
-            End
-          </button>
-        {/if}
+        <button
+          onclick={() => (sessionId ? (showEndConfirm = true) : goto('/dashboard'))}
+          class="px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+        >
+          End
+        </button>
       </div>
     </div>
 

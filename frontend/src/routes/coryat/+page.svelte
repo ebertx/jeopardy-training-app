@@ -68,7 +68,15 @@
 
     <!-- Header -->
     <div>
-      <h1 class="text-3xl font-bold text-jeopardy-blue mb-2">Coryat Score Practice</h1>
+      <div class="flex items-center justify-between gap-3">
+        <h1 class="text-3xl font-bold text-jeopardy-blue mb-2">Coryat Score Practice</h1>
+        <button
+          onclick={() => goto('/dashboard')}
+          class="shrink-0 px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+        >
+          Done
+        </button>
+      </div>
       <p class="text-gray-600">
         The Coryat score is a self-scoring method where you play along with Jeopardy! without wagering.
         Correct answers add the clue value; incorrect answers subtract the clue value. Passes are free.
