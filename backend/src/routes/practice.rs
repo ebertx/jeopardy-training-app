@@ -473,12 +473,25 @@ pub async fn status(
         vec![]
     };
 
+    // Deck strip counts for the dashboard (same definitions as /api/cards).
+    let deck: (i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+           COUNT(*) FILTER (WHERE state IN ('learning','relearning')), \
+           COUNT(*) FILTER (WHERE state = 'review' AND interval_days >= 21), \
+           COUNT(*) FILTER (WHERE suspended = true OR lapses >= 4) \
+         FROM srs_cards WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
     Ok(Json(json!({
         "dueCount": due_count,
         "newRemaining": new_remaining,
         "reviewedToday": reviewed_today,
         "forecast": forecast_json,
         "adaptiveWeights": adaptive_weights,
+        "deck": { "learning": deck.0, "mastered": deck.1, "struggling": deck.2 },
     })))
 }
 

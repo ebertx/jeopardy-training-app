@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod cards;
 pub mod categories;
 pub mod coryat;
 pub mod drill;
@@ -8,6 +9,5 @@ pub mod practice;
 pub mod preferences;
 pub mod questions;
 pub mod quiz;
-pub mod review;
 pub mod stats;
 pub mod study;
