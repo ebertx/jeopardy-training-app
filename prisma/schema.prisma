@@ -25,6 +25,8 @@ model jeopardy_questions {
   archived            Boolean             @default(false)
   archived_reason     String?
   archived_at         DateTime?           @db.Timestamp(6)
+  // search_tsv tsvector GENERATED ALWAYS AS to_tsvector(answer||question||category) STORED
+  //   + GIN index idx_jq_search_tsv — managed by migration 0002_search_index.sql, not modeled here.
   question_attempts   question_attempts[]
   question_mastery    question_mastery[]
   srs_cards           srs_cards[]
