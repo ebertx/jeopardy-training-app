@@ -5,6 +5,8 @@ mod error;
 mod models;
 mod srs;
 mod adaptive;
+mod insights;
+mod openai;
 mod routes;
 
 use axum::{routing::{get, post}, Json, Router};
@@ -17,6 +19,8 @@ use tower_http::set_header::SetResponseHeaderLayer;
 pub struct AppState {
     pub pool: sqlx::PgPool,
     pub config: config::Config,
+    pub insight_inflight: tokio::sync::Mutex<std::collections::HashSet<i32>>,
+    pub blindspot_inflight: std::sync::atomic::AtomicBool,
 }
 
 fn main() {
@@ -49,7 +53,12 @@ async fn run() {
     let pool = db::create_pool(&config.database_url).await;
     let addr = format!("{}:{}", config.host, config.port);
 
-    let state = Arc::new(AppState { pool, config });
+    let state = Arc::new(AppState {
+        pool,
+        config,
+        insight_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+        blindspot_inflight: std::sync::atomic::AtomicBool::new(false),
+    });
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
     let spa_fallback = ServeFile::new(format!("{}/index.html", static_dir));
