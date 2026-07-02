@@ -476,10 +476,12 @@ pub async fn status(
     // Deck strip counts for the dashboard (same definitions as /api/cards).
     let deck: (i64, i64, i64) = sqlx::query_as(
         "SELECT \
-           COUNT(*) FILTER (WHERE state IN ('learning','relearning')), \
-           COUNT(*) FILTER (WHERE state = 'review' AND interval_days >= 21), \
-           COUNT(*) FILTER (WHERE suspended = true OR lapses >= 4) \
-         FROM srs_cards WHERE user_id = $1",
+           COUNT(*) FILTER (WHERE sc.state IN ('learning','relearning')), \
+           COUNT(*) FILTER (WHERE sc.state = 'review' AND sc.interval_days >= 21), \
+           COUNT(*) FILTER (WHERE sc.suspended = true OR sc.lapses >= 4) \
+         FROM srs_cards sc \
+         JOIN jeopardy_questions jq ON jq.id = sc.question_id \
+         WHERE sc.user_id = $1 AND jq.archived = false",
     )
     .bind(user_id)
     .fetch_one(&state.pool)
