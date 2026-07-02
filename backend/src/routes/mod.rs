@@ -2,6 +2,7 @@ pub mod admin;
 pub mod auth;
 pub mod categories;
 pub mod coryat;
+pub mod drill;
 pub mod mastery;
 pub mod practice;
 pub mod preferences;

@@ -146,7 +146,7 @@ pub fn day_start_utc(now: DateTime<Utc>, tz: Option<&str>) -> DateTime<Utc> {
 }
 
 #[derive(sqlx::FromRow)]
-struct ClueRow {
+pub(crate) struct ClueRow {
     id: i32,
     question: Option<String>,
     answer: Option<String>,
@@ -158,7 +158,7 @@ struct ClueRow {
     notes: Option<String>,
 }
 
-fn clue_json(row: ClueRow) -> Value {
+pub(crate) fn clue_json(row: ClueRow) -> Value {
     json!({
         "id": row.id,
         "question": row.question,
