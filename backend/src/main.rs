@@ -4,6 +4,7 @@ mod db;
 mod error;
 mod models;
 mod srs;
+mod adaptive;
 mod routes;
 
 use axum::{routing::{get, post}, Json, Router};
