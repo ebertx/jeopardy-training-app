@@ -30,7 +30,10 @@
     reviewedToday: number;
     forecast: Array<{ date: string; count: number }>;
     adaptiveWeights?: Array<{ category: string; attempts: number; accuracy: number; weight: number }>;
+    deck?: { learning: number; mastered: number; struggling: number };
   } | null>(null);
+
+  let lastStudy = $state<string | null>(null);
 
   async function fetchStats() {
     loading = true;
@@ -47,6 +50,10 @@
   onMount(() => {
     fetchStats();
     api.get('/api/practice/status').then((s) => (srs = s)).catch(() => (srs = null));
+    api
+      .get('/api/study/latest')
+      .then((s) => (lastStudy = s?.generated_at ?? s?.generatedAt ?? null))
+      .catch(() => (lastStudy = null));
   });
 
   // Re-fetch when toggle changes (but not on initial mount)
@@ -249,8 +256,36 @@
             </div>
           </div>
         {/if}
+        {#if srs.deck}
+          <div class="mt-5 pt-4 border-t border-gray-100 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+            <a href="/cards?state=learning" class="text-jeopardy-blue hover:underline">
+              <span class="font-bold">{srs.deck.learning}</span> learning
+            </a>
+            <a href="/cards?state=mastered" class="text-jeopardy-blue hover:underline">
+              <span class="font-bold">{srs.deck.mastered}</span> mastered
+            </a>
+            <a href="/cards?state=struggling" class="{srs.deck.struggling > 0 ? 'text-red-600' : 'text-jeopardy-blue'} hover:underline">
+              <span class="font-bold">{srs.deck.struggling}</span> struggling
+            </a>
+          </div>
+        {/if}
       </div>
     {/if}
+
+    <!-- Study sheets -->
+    <a
+      href="/study"
+      class="bg-white rounded-xl shadow-sm p-5 mb-8 flex items-center justify-between hover:bg-gray-50 transition-colors group block"
+    >
+      <div>
+        <p class="font-semibold text-gray-800">Study sheets</p>
+        <p class="text-sm text-gray-500 mt-0.5">
+          Generate targeted reading from your recent misses{#if lastStudy}
+            — last generated {new Date(lastStudy).toLocaleDateString()}{/if}
+        </p>
+      </div>
+      <span class="text-gray-400 group-hover:text-gray-600 text-lg">&rarr;</span>
+    </a>
 
     <!-- Action Buttons -->
     <div class="flex flex-wrap gap-3 mb-8">
@@ -261,16 +296,10 @@
         Practice
       </a>
       <a
-        href="/review"
+        href="/drill"
         class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors"
       >
-        Review
-      </a>
-      <a
-        href="/mastered"
-        class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors"
-      >
-        Mastered
+        Drill
       </a>
       <a
         href="/coryat"
