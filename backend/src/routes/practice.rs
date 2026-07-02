@@ -238,8 +238,27 @@ pub async fn next(
         }
     }
 
-    // 3) Nothing to do.
-    Ok(Json(json!({ "done": true, "dueCount": due_count, "newRemaining": new_remaining })))
+    // 3) Nothing to do right now. Tell the client when work resumes so it can
+    // be honest about learning-step cards landing in a few minutes.
+    let next_due_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT min(due) FROM srs_cards WHERE user_id = $1 AND suspended = false AND due > now()",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let due_soon_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM srs_cards
+         WHERE user_id = $1 AND suspended = false
+           AND due > now() AND due <= now() + interval '60 minutes'",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(json!({
+        "done": true, "dueCount": due_count, "newRemaining": new_remaining,
+        "nextDueAt": next_due_at, "dueSoonCount": due_soon_count,
+    })))
 }
 
 async fn pick_new_clue(
@@ -347,8 +366,9 @@ pub async fn status(
     .await?;
 
     // 14-day due forecast (calendar day in UTC; good enough for a bar chart).
+    // Overdue cards fold into today's bucket so the chart never shows past dates.
     let forecast: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
-        "SELECT (due AT TIME ZONE 'UTC')::date AS d, COUNT(*)
+        "SELECT GREATEST((due AT TIME ZONE 'UTC')::date, (now() AT TIME ZONE 'UTC')::date) AS d, COUNT(*)
          FROM srs_cards
          WHERE user_id = $1 AND suspended = false
            AND due < now() + interval '14 days'

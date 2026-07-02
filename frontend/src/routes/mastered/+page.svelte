@@ -5,6 +5,7 @@
   import { api } from '$lib/api';
   import QuestionCard from '$lib/components/QuestionCard.svelte';
   import CategoryFilter from '$lib/components/CategoryFilter.svelte';
+  import Modal from '$lib/components/Modal.svelte';
 
   const auth = getAuth();
 
@@ -101,6 +102,10 @@
     await fetchMastered();
   });
 </script>
+<svelte:head>
+  <title>Mastered — Jeopardy! Training</title>
+</svelte:head>
+
 
 <svelte:window onkeydown={handleKeydown} />
 
@@ -204,9 +209,9 @@
 
 <!-- Reset mastery confirmation dialog -->
 {#if showResetConfirm}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-    <div class="w-full max-w-sm rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4">
-      <h2 class="text-lg font-bold text-gray-800">Reset Mastery?</h2>
+  <Modal onclose={() => (showResetConfirm = false)} ariaLabelledby="reset-mastery-title">
+    <div class="rounded-2xl bg-white shadow-2xl p-6 flex flex-col gap-4">
+      <h2 id="reset-mastery-title" class="text-lg font-bold text-gray-800">Reset Mastery?</h2>
       <p class="text-sm text-gray-600">
         This will reset the mastery status for this question. You'll need to answer it correctly
         multiple times again to re-master it.
@@ -227,5 +232,5 @@
         </button>
       </div>
     </div>
-  </div>
+  </Modal>
 {/if}

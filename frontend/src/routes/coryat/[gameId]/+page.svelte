@@ -231,6 +231,10 @@
     }
   }
 </script>
+<svelte:head>
+  <title>Coryat Game — Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-gray-900 py-4 px-2 sm:px-4">
   <div class="max-w-5xl mx-auto flex flex-col gap-4">

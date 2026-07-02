@@ -10,6 +10,7 @@
     categoryBreakdown: Array<{ category: string; total: number; correct: number; accuracy: number }>;
     recentSessions: Array<{ id: number; started_at: string; completed_at: string; total: number; correct: number }>;
     dailyStats: Array<{ date: string; avgPercentage: number; sessionCount: number }>;
+    dailyAccuracy: Array<{ date: string; total: number; correct: number; accuracy: number }>;
   }
 
   const auth = getAuth();
@@ -54,17 +55,21 @@
     fetchStats();
   });
 
-  // Chart data derived from stats
+  // Daily accuracy (last 30 days), computed from every attempt — unlike the old
+  // dailyStats series it doesn't depend on sessions being formally completed.
   let lineChartData = $derived(
-    stats
+    stats?.dailyAccuracy?.length
       ? {
-          labels: stats.dailyStats.map((d) => d.date),
+          labels: stats.dailyAccuracy.map((d) => d.date),
           datasets: [
             {
               label: 'Accuracy %',
-              data: stats.dailyStats.map((d) => d.avgPercentage),
+              data: stats.dailyAccuracy.map((d) => d.accuracy),
               borderColor: '#0c47b7',
               borderWidth: 2,
+              pointRadius: 3,
+              pointHitRadius: 12,
+              pointBackgroundColor: '#0c47b7',
               fill: false,
               tension: 0.3,
             },
@@ -76,6 +81,7 @@
   let lineChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
     scales: {
       y: {
         min: 0,
@@ -83,6 +89,43 @@
         title: { display: true, text: 'Accuracy %' },
       },
       x: { ticks: { maxRotation: 45 } },
+    },
+  };
+
+  // 14-day due forecast, padded so quiet days render as true zeros.
+  let forecastChartData = $derived.by(() => {
+    if (!srs || !srs.forecast) return null;
+    const counts = new Map(srs.forecast.map((f) => [f.date, f.count]));
+    const start = new Date();
+    const labels: string[] = [];
+    const data: number[] = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + i));
+      const key = d.toISOString().slice(0, 10);
+      labels.push(i === 0 ? 'Today' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', timeZone: 'UTC' }));
+      data.push(counts.get(key) ?? 0);
+    }
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'Reviews due',
+          data,
+          backgroundColor: '#0c47b7',
+          borderRadius: 4,
+          maxBarThickness: 28,
+        },
+      ],
+    };
+  });
+
+  let forecastChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      y: { min: 0, ticks: { precision: 0 } },
+      x: { grid: { display: false } },
     },
   };
 
@@ -124,6 +167,10 @@
       : []
   );
 </script>
+<svelte:head>
+  <title>Dashboard — Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-gray-50 py-8 px-4">
   <div class="max-w-6xl mx-auto">
@@ -143,25 +190,35 @@
 
     <!-- SRS Practice Summary -->
     {#if srs}
-      <div class="bg-white rounded-xl shadow-sm p-5 flex flex-wrap gap-8 mb-8">
-        <div>
-          <p class="text-3xl font-bold text-jeopardy-blue">{srs.dueCount}</p>
-          <p class="text-xs uppercase text-gray-500">Due today</p>
+      <div class="bg-white rounded-xl shadow-sm p-5 mb-8">
+        <div class="flex flex-wrap gap-8">
+          <div>
+            <p class="text-3xl font-bold text-jeopardy-blue">{srs.dueCount}</p>
+            <p class="text-xs uppercase text-gray-500">Due today</p>
+          </div>
+          <div>
+            <p class="text-3xl font-bold text-jeopardy-blue">{srs.newRemaining}</p>
+            <p class="text-xs uppercase text-gray-500">New left</p>
+          </div>
+          <div>
+            <p class="text-3xl font-bold text-jeopardy-blue">{srs.reviewedToday}</p>
+            <p class="text-xs uppercase text-gray-500">Reviewed today</p>
+          </div>
+          <a
+            href="/practice"
+            class="ml-auto self-center px-4 py-2 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
+          >
+            Practice &rarr;
+          </a>
         </div>
-        <div>
-          <p class="text-3xl font-bold text-jeopardy-blue">{srs.newRemaining}</p>
-          <p class="text-xs uppercase text-gray-500">New left</p>
-        </div>
-        <div>
-          <p class="text-3xl font-bold text-jeopardy-blue">{srs.reviewedToday}</p>
-          <p class="text-xs uppercase text-gray-500">Reviewed today</p>
-        </div>
-        <a
-          href="/practice"
-          class="ml-auto self-center px-4 py-2 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
-        >
-          Practice &rarr;
-        </a>
+        {#if forecastChartData}
+          <div class="mt-5 pt-4 border-t border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-600 mb-2">Reviews due — next 14 days</h2>
+            <div class="h-36">
+              <StatsChart type="bar" data={forecastChartData} options={forecastChartOptions} />
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -220,10 +277,10 @@
         </div>
       </div>
 
-      <!-- Daily Performance Chart -->
-      {#if stats.dailyStats.length > 0 && lineChartData}
+      <!-- Daily Accuracy Chart -->
+      {#if lineChartData}
         <div class="bg-white rounded-xl shadow p-6 mb-8">
-          <h2 class="text-lg font-semibold text-gray-800 mb-4">Daily Performance</h2>
+          <h2 class="text-lg font-semibold text-gray-800 mb-4">Accuracy — last 30 days</h2>
           <div style="height: 300px;">
             <StatsChart type="line" data={lineChartData} options={lineChartOptions} />
           </div>

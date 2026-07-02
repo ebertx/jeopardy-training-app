@@ -27,6 +27,10 @@
     }
   }
 </script>
+<svelte:head>
+  <title>Register — Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-gray-50 flex items-center justify-center px-4">
   <div class="bg-white rounded-2xl shadow-lg w-full max-w-md p-8">

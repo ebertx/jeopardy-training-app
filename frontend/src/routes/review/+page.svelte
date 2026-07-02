@@ -174,6 +174,10 @@
     await fetchReviewItems();
   });
 </script>
+<svelte:head>
+  <title>Review — Jeopardy! Training</title>
+</svelte:head>
+
 
 <svelte:window onkeydown={handleKeydown} />
 

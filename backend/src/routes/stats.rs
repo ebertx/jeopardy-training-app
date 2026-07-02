@@ -167,6 +167,33 @@ pub async fn stats(
         })
         .collect();
 
+    // 5. Daily accuracy, last 30 days, straight from attempts (independent of
+    // session completion — Done-button exits never complete a session).
+    let daily_accuracy_rows: Vec<(Option<chrono::NaiveDate>, i64, i64)> = sqlx::query_as(
+        "SELECT DATE(qa.answered_at) as date,
+          COUNT(*)::bigint as total,
+          SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::bigint as correct
+        FROM question_attempts qa
+        WHERE qa.user_id = $1 AND qa.answered_at >= now() - interval '30 days'
+        GROUP BY DATE(qa.answered_at)
+        ORDER BY date ASC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let daily_accuracy: Vec<Value> = daily_accuracy_rows
+        .into_iter()
+        .map(|(date, day_total, day_correct)| {
+            let pct = if day_total > 0 {
+                (day_correct as f64 / day_total as f64) * 100.0
+            } else {
+                0.0
+            };
+            json!({ "date": date, "total": day_total, "correct": day_correct, "accuracy": pct })
+        })
+        .collect();
+
     Ok(Json(json!({
         "overall": {
             "total": total,
@@ -176,5 +203,6 @@ pub async fn stats(
         "categoryBreakdown": category_breakdown,
         "recentSessions": recent_sessions,
         "dailyStats": daily_stats,
+        "dailyAccuracy": daily_accuracy,
     })))
 }

@@ -28,6 +28,8 @@
     }
   });
 
+  let savedTimer: ReturnType<typeof setTimeout> | null = null;
+
   async function saveSrsPrefs() {
     srsSaved = false;
     try {
@@ -37,11 +39,17 @@
         timezone,
       });
       srsSaved = true;
+      if (savedTimer) clearTimeout(savedTimer);
+      savedTimer = setTimeout(() => (srsSaved = false), 2500);
     } catch {
       // ignore save errors here; controls simply won't persist
     }
   }
 </script>
+<svelte:head>
+  <title>Settings — Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-gray-50 py-8 px-4">
   <div class="max-w-lg mx-auto flex flex-col gap-6">

@@ -15,7 +15,7 @@
     completed_at: string | null;
     jeopardy_score: number;
     double_jeopardy_score: number;
-    total_score: number;
+    final_score: number | null;
     created_at: string;
   }
 
@@ -28,14 +28,14 @@
   let avgScore = $derived(
     totalGames > 0
       ? Math.round(
-          history.filter((g) => g.completed_at !== null).reduce((sum, g) => sum + g.total_score, 0) /
+          history.filter((g) => g.completed_at !== null).reduce((sum, g) => sum + (g.final_score ?? 0), 0) /
             totalGames
         )
       : 0
   );
   let bestScore = $derived(
     totalGames > 0
-      ? Math.max(...history.filter((g) => g.completed_at !== null).map((g) => g.total_score))
+      ? Math.max(...history.filter((g) => g.completed_at !== null).map((g) => g.final_score ?? 0))
       : 0
   );
   let incompleteGame = $derived(history.find((g) => g.completed_at === null) ?? null);
@@ -62,6 +62,10 @@
     }
   }
 </script>
+<svelte:head>
+  <title>Coryat — Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-gray-50 py-8 px-4">
   <div class="max-w-3xl mx-auto flex flex-col gap-6">

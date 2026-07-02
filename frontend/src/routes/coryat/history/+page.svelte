@@ -47,6 +47,10 @@
     }
   });
 </script>
+<svelte:head>
+  <title>Coryat History — Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-gray-50 py-8 px-4">
   <div class="max-w-3xl mx-auto flex flex-col gap-6">

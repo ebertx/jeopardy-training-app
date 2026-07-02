@@ -17,6 +17,8 @@
   // --- State ---
   let question = $state<any>(null);
   let isNew = $state(false);
+  let nextDueAt = $state<string | null>(null);
+  let dueSoonCount = $state(0);
   let dueCount = $state(0);
   let newRemaining = $state(0);
   let done = $state(false);
@@ -69,6 +71,8 @@
       if (res.done) {
         done = true;
         question = null;
+        nextDueAt = res.nextDueAt ?? null;
+        dueSoonCount = res.dueSoonCount ?? 0;
       } else {
         done = false;
         isNew = res.isNew;
@@ -110,8 +114,8 @@
         reason: 'Missing media or problematic question',
       });
       // Move to next question
-      await fetchQuestion();
       showAnswer = false;
+      await fetchQuestion();
     } catch (err: any) {
       error = err?.message ?? 'Failed to archive question';
     }
@@ -145,8 +149,8 @@
   async function handleCategoryChange(value: string) {
     selectedCategory = value;
     filterGen++;
-    await fetchQuestion();
     showAnswer = false;
+    await fetchQuestion();
   }
 
   function toggleGameTypeFilter(type: string) {
@@ -157,8 +161,8 @@
     }
     savePreferences();
     filterGen++;
-    fetchQuestion();
     showAnswer = false;
+    fetchQuestion();
   }
 
   // --- Keyboard shortcuts ---
@@ -192,6 +196,10 @@
     await fetchQuestion();
   });
 </script>
+<svelte:head>
+  <title>Practice — Jeopardy! Training</title>
+</svelte:head>
+
 
 <svelte:window onkeydown={handleKeydown} />
 
@@ -293,6 +301,11 @@
           onTooEasy={() => handleGrade('too_easy')}
           {submitting}
         >
+          {#snippet badge()}
+            {#if isNew}
+              <span class="inline-block px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">New</span>
+            {/if}
+          {/snippet}
           {#snippet additionalActions()}
             {#if showAnswer}
               <button
@@ -317,8 +330,25 @@
         {/if}
       </p>
     {:else if done}
-      <div class="text-center py-16 text-gray-600">
-        🎉 All caught up — no reviews due and today's new-clue limit is reached.
+      <div class="text-center py-16 text-gray-600 flex flex-col items-center gap-3">
+        {#if dueSoonCount > 0 && nextDueAt}
+          <p>
+            ✅ Caught up for now — <span class="font-semibold">{dueSoonCount}</span> more
+            {dueSoonCount === 1 ? 'card comes' : 'cards come'} due at
+            <span class="font-semibold">{new Date(nextDueAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>.
+          </p>
+          <button
+            onclick={() => fetchQuestion()}
+            class="px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            Check again
+          </button>
+        {:else}
+          <p>🎉 All caught up — no reviews due and today's new-clue limit is reached.</p>
+          {#if nextDueAt}
+            <p class="text-sm text-gray-400">Next review due {new Date(nextDueAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.</p>
+          {/if}
+        {/if}
       </div>
     {:else}
       <div class="text-center py-16 text-gray-500">No questions available for the selected filters.</div>

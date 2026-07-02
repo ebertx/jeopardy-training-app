@@ -6,18 +6,19 @@
   let menuOpen = $state(false);
 
   const links = [
+    { href: '/dashboard', label: 'Dashboard' },
     { href: '/practice', label: 'Practice' },
     { href: '/drill', label: 'Drill' },
     { href: '/coryat', label: 'Coryat' },
     { href: '/review', label: 'Review' },
     { href: '/mastered', label: 'Mastered' },
     { href: '/study', label: 'Study' },
-    { href: '/dashboard', label: 'Dashboard' },
     { href: '/settings', label: 'Settings' },
   ];
 
   function isActive(href: string): boolean {
-    return page.url.pathname === href;
+    // Match sub-routes too, so e.g. /coryat/123 highlights the Coryat link.
+    return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
   }
 
   function toggleMenu() {
@@ -41,7 +42,7 @@
       </a>
 
       <!-- Desktop links -->
-      <div class="hidden md:flex items-center gap-1">
+      <div class="hidden md:flex items-center gap-1 flex-wrap justify-end">
         {#each links as link}
           <a
             href={link.href}
@@ -77,6 +78,7 @@
         class="md:hidden p-2 rounded text-jeopardy-gold hover:text-white"
         onclick={toggleMenu}
         aria-label="Toggle menu"
+        aria-expanded={menuOpen}
       >
         {#if menuOpen}
           <!-- X icon -->

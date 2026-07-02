@@ -129,6 +129,10 @@
     }
   });
 </script>
+<svelte:head>
+  <title>Drill — Jeopardy! Training</title>
+</svelte:head>
+
 
 <svelte:window onkeydown={handleKeydown} />
 
@@ -230,7 +234,13 @@
           onGotIt={() => handleGrade('got_it')}
           onTooEasy={() => handleGrade('too_easy')}
           {submitting}
-        />
+        >
+          {#snippet badge()}
+            {#if isNew}
+              <span class="inline-block px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">New</span>
+            {/if}
+          {/snippet}
+        </QuestionCard>
       </div>
       <p class="hidden sm:block text-center text-xs text-gray-400">
         {#if !showAnswer}

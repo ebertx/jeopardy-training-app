@@ -10,6 +10,10 @@
     }
   });
 </script>
+<svelte:head>
+  <title>Jeopardy! Training</title>
+</svelte:head>
+
 
 <div class="min-h-screen bg-jeopardy-blue flex items-center justify-center px-4">
   <div class="text-center">

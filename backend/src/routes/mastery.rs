@@ -41,6 +41,7 @@ pub async fn random_mastered(
             FROM srs_cards sc
             JOIN jeopardy_questions jq ON jq.id = sc.question_id
             WHERE sc.user_id = $1 AND sc.state = 'review' AND sc.interval_days >= 21
+              AND sc.suspended = false
               AND jq.archived = false
               AND jq.classifier_category = $2",
         )
@@ -55,6 +56,7 @@ pub async fn random_mastered(
             FROM srs_cards sc
             JOIN jeopardy_questions jq ON jq.id = sc.question_id
             WHERE sc.user_id = $1 AND sc.state = 'review' AND sc.interval_days >= 21
+              AND sc.suspended = false
               AND jq.archived = false",
         )
         .bind(user_id)
@@ -100,7 +102,8 @@ pub async fn reset(
 
     sqlx::query(
         "UPDATE srs_cards
-         SET state = 'learning', interval_days = 0, ease = 2.5, reps = 0, step_index = 0, due = now()
+         SET state = 'learning', interval_days = 0, ease = 2.5, reps = 0, step_index = 0,
+             lapses = 0, suspended = false, due = now()
          WHERE user_id = $1 AND question_id = $2",
     )
     .bind(user_id)
