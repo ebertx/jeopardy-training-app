@@ -7,6 +7,7 @@
 
   const links = [
     { href: '/practice', label: 'Practice' },
+    { href: '/drill', label: 'Drill' },
     { href: '/coryat', label: 'Coryat' },
     { href: '/review', label: 'Review' },
     { href: '/mastered', label: 'Mastered' },
