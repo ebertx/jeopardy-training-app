@@ -30,6 +30,7 @@ model jeopardy_questions {
   question_attempts   question_attempts[]
   question_mastery    question_mastery[]
   srs_cards           srs_cards[]
+  clue_insights       clue_insights[]
 
   @@index([archived])
   @@index([archived, air_date(sort: Desc)])
@@ -56,6 +57,7 @@ model users {
   timezone              String?
   adaptive_targeting    Boolean                  @default(true)
   srs_cards             srs_cards[]
+  blindspot_packs       blindspot_packs[]
 
   @@index([approved])
   @@index([role])
@@ -163,6 +165,31 @@ model srs_cards {
   @@index([user_id, due])
   @@index([user_id, suspended, due])
   @@index([user_id, created_at])
+}
+
+model clue_insights {
+  id          Int                @id @default(autoincrement())
+  question_id Int                @unique
+  content     Json               @db.JsonB
+  model       String
+  created_at  DateTime           @default(now()) @db.Timestamptz(6)
+  question    jeopardy_questions @relation(fields: [question_id], references: [id])
+}
+
+model blindspot_packs {
+  id           Int      @id @default(autoincrement())
+  user_id      Int
+  theme        String
+  diagnosis    String
+  primer       String
+  search_query String
+  match_count  Int
+  miss_count   Int      @default(0)
+  superseded   Boolean  @default(false)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  user         users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, superseded, created_at(sort: Desc)])
 }
 
 // NextAuth database sessions for persistent login (especially iOS PWA)
