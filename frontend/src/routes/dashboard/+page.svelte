@@ -24,7 +24,13 @@
   let error = $state('');
   let includeReviewed = $state(false);
 
-  let srs = $state<{ dueCount: number; newRemaining: number; reviewedToday: number; forecast: Array<{ date: string; count: number }> } | null>(null);
+  let srs = $state<{
+    dueCount: number;
+    newRemaining: number;
+    reviewedToday: number;
+    forecast: Array<{ date: string; count: number }>;
+    adaptiveWeights?: Array<{ category: string; attempts: number; accuracy: number; weight: number }>;
+  } | null>(null);
 
   async function fetchStats() {
     loading = true;
@@ -216,6 +222,30 @@
             <h2 class="text-sm font-semibold text-gray-600 mb-2">Reviews due — next 14 days</h2>
             <div class="h-36">
               <StatsChart type="bar" data={forecastChartData} options={forecastChartOptions} />
+            </div>
+          </div>
+        {/if}
+        {#if srs.adaptiveWeights && srs.adaptiveWeights.length > 0}
+          <div class="mt-5 pt-4 border-t border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-600 mb-1">Focus areas</h2>
+            <p class="text-xs text-gray-400 mb-3">New clues favor your weaker categories.</p>
+            <div class="flex flex-col gap-1.5">
+              {#each srs.adaptiveWeights as w, i (w.category)}
+                <div class="flex items-center gap-3 text-sm">
+                  <span class="w-52 shrink-0 truncate text-gray-700">
+                    {w.category}
+                    {#if i < 3}
+                      <span class="ml-1 px-1.5 py-0.5 rounded-full bg-jeopardy-gold/20 text-jeopardy-blue text-[10px] font-bold uppercase tracking-wide">Targeted</span>
+                    {/if}
+                  </span>
+                  <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div class="h-full bg-jeopardy-blue rounded-full" style="width: {Math.round(w.weight * 100)}%"></div>
+                  </div>
+                  <span class="w-28 shrink-0 text-right text-xs text-gray-500">
+                    {Math.round(w.accuracy)}% · {w.attempts} tries
+                  </span>
+                </div>
+              {/each}
             </div>
           </div>
         {/if}

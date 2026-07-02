@@ -15,6 +15,7 @@
   let gameTypeFilters = $state<string[]>([]);
   let newCardsPerDay = $state(20);
   let timezone = $state('');
+  let adaptiveTargeting = $state(true);
   let srsSaved = $state(false);
 
   onMount(async () => {
@@ -23,6 +24,7 @@
       gameTypeFilters = prefs?.gameTypeFilters ?? [];
       newCardsPerDay = prefs?.newCardsPerDay ?? 20;
       timezone = prefs?.timezone ?? '';
+      adaptiveTargeting = prefs?.adaptiveTargeting ?? true;
     } catch {
       // ignore; keep defaults
     }
@@ -37,6 +39,7 @@
         gameTypeFilters,
         newCardsPerDay,
         timezone,
+        adaptiveTargeting,
       });
       srsSaved = true;
       if (savedTimer) clearTimeout(savedTimer);
@@ -109,6 +112,19 @@
             onchange={saveSrsPrefs}
             class="mt-1 w-64 rounded-lg border border-gray-300 px-3 py-2"
           />
+        </label>
+
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            bind:checked={adaptiveTargeting}
+            onchange={saveSrsPrefs}
+            class="w-4 h-4 rounded border-gray-300 text-jeopardy-blue focus:ring-jeopardy-blue"
+          />
+          <span>
+            <span class="font-semibold">Adaptive clue selection</span>
+            <span class="text-gray-500">— favor your weaker categories</span>
+          </span>
         </label>
 
         {#if srsSaved}
