@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
 use crate::srs::{schedule, CardKind, Prev, Rating};
+use crate::adaptive::{compute_weights, sample_category, CategoryStat};
 use crate::AppState;
 
 const LEECH_LAPSES: i32 = 8;
@@ -180,8 +181,8 @@ pub async fn next(
     let user_id = auth.user_id;
 
     // User prefs.
-    let (new_per_day, tz): (i32, Option<String>) =
-        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+    let (new_per_day, tz, adaptive): (i32, Option<String>, bool) =
+        sqlx::query_as("SELECT new_cards_per_day, timezone, adaptive_targeting FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&state.pool)
             .await?;
@@ -230,7 +231,7 @@ pub async fn next(
 
     // 2) A new clue, if the daily allowance remains.
     if new_remaining > 0 {
-        if let Some(row) = pick_new_clue(&state, user_id, &params).await? {
+        if let Some(row) = pick_new_clue(&state, user_id, adaptive, &params).await? {
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": clue_json(row),
                 "dueCount": due_count, "newRemaining": new_remaining,
@@ -261,12 +262,53 @@ pub async fn next(
     })))
 }
 
-async fn pick_new_clue(
+/// Per-category (attempts, correct) for the adaptive window: last 180 days,
+/// falling back to all-time when the window holds < 200 attempts.
+async fn adaptive_category_stats(
     state: &Arc<AppState>,
     user_id: i32,
+) -> Result<Vec<CategoryStat>, AppError> {
+    const WINDOWED_SQL: &str = "SELECT jq.classifier_category, COUNT(*)::bigint, \
+             SUM((qa.correct)::int)::bigint \
+         FROM question_attempts qa \
+         JOIN jeopardy_questions jq ON jq.id = qa.question_id \
+         WHERE qa.user_id = $1 AND jq.classifier_category IS NOT NULL \
+           AND qa.answered_at >= now() - interval '180 days' \
+         GROUP BY jq.classifier_category";
+    const ALL_TIME_SQL: &str = "SELECT jq.classifier_category, COUNT(*)::bigint, \
+             SUM((qa.correct)::int)::bigint \
+         FROM question_attempts qa \
+         JOIN jeopardy_questions jq ON jq.id = qa.question_id \
+         WHERE qa.user_id = $1 AND jq.classifier_category IS NOT NULL \
+         GROUP BY jq.classifier_category";
+
+    let windowed: Vec<(String, i64, i64)> = sqlx::query_as(WINDOWED_SQL)
+        .bind(user_id)
+        .fetch_all(&state.pool)
+        .await?;
+    let windowed_total: i64 = windowed.iter().map(|r| r.1).sum();
+
+    let rows = if windowed_total < 200 {
+        sqlx::query_as(ALL_TIME_SQL)
+            .bind(user_id)
+            .fetch_all(&state.pool)
+            .await?
+    } else {
+        windowed
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(|(category, attempts, correct)| CategoryStat { category, attempts, correct })
+        .collect())
+}
+
+async fn pick_with_filters(
+    state: &Arc<AppState>,
+    user_id: i32,
+    category: &str, // "all" or a classifier category
     params: &HashMap<String, String>,
 ) -> Result<Option<ClueRow>, AppError> {
-    let category = params.get("category").map(|s| s.as_str()).unwrap_or("all");
     let game_types_str = params.get("gameTypes").map(|s| s.as_str()).unwrap_or("");
     let game_types: Vec<&str> = game_types_str
         .split(',')
@@ -328,14 +370,46 @@ async fn pick_new_clue(
     Ok(q.fetch_optional(&state.pool).await?)
 }
 
+/// Strategy wrapper: 60% of pulls (when no manual filter and the user's toggle
+/// is on) sample a category by weakness weight first; 40% — and all filtered or
+/// toggled-off pulls — behave exactly as before. A weighted pick that finds no
+/// eligible clue falls back to unconstrained.
+async fn pick_new_clue(
+    state: &Arc<AppState>,
+    user_id: i32,
+    adaptive: bool,
+    params: &HashMap<String, String>,
+) -> Result<Option<ClueRow>, AppError> {
+    let manual_category = params.get("category").map(|s| s.as_str()).unwrap_or("all");
+
+    if manual_category == "all" && adaptive {
+        use rand::Rng;
+        let roll: f64 = rand::rng().random();
+        if roll >= 0.4 {
+            let stats = adaptive_category_stats(state, user_id).await?;
+            let weights = compute_weights(&stats);
+            let r: f64 = rand::rng().random();
+            if let Some(cat) = sample_category(&weights, r) {
+                let cat = cat.to_string();
+                if let Some(row) = pick_with_filters(state, user_id, &cat, params).await? {
+                    return Ok(Some(row));
+                }
+                // Weighted category exhausted — fall through to unconstrained.
+            }
+        }
+    }
+
+    pick_with_filters(state, user_id, manual_category, params).await
+}
+
 pub async fn status(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
 
-    let (new_per_day, tz): (i32, Option<String>) =
-        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+    let (new_per_day, tz, adaptive): (i32, Option<String>, bool) =
+        sqlx::query_as("SELECT new_cards_per_day, timezone, adaptive_targeting FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&state.pool)
             .await?;
@@ -382,11 +456,29 @@ pub async fn status(
         .map(|(d, c)| json!({ "date": d, "count": c }))
         .collect();
 
+    let adaptive_weights: Vec<Value> = if adaptive {
+        let stats = adaptive_category_stats(&state, user_id).await?;
+        compute_weights(&stats)
+            .into_iter()
+            .map(|w| {
+                json!({
+                    "category": w.category,
+                    "attempts": w.attempts,
+                    "accuracy": w.accuracy,
+                    "weight": w.weight,
+                })
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
     Ok(Json(json!({
         "dueCount": due_count,
         "newRemaining": new_remaining,
         "reviewedToday": reviewed_today,
         "forecast": forecast_json,
+        "adaptiveWeights": adaptive_weights,
     })))
 }
 
