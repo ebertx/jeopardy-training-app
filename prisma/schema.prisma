@@ -54,6 +54,7 @@ model users {
   auth_sessions         auth_sessions[]
   new_cards_per_day     Int                      @default(20)
   timezone              String?
+  adaptive_targeting    Boolean                  @default(true)
   srs_cards             srs_cards[]
 
   @@index([approved])
