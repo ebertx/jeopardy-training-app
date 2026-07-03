@@ -18,6 +18,8 @@
     onTooEasy,
     badge,
     additionalActions,
+    paused = false,
+    pausePanel,
     cardBgColor = 'bg-jeopardy-blue',
     cardTextColor = 'text-jeopardy-gold',
     submitting = false,
@@ -38,6 +40,8 @@
     onTooEasy?: () => void;
     badge?: Snippet;
     additionalActions?: Snippet;
+    paused?: boolean;
+    pausePanel?: Snippet;
     cardBgColor?: string;
     cardTextColor?: string;
     submitting?: boolean;
@@ -79,7 +83,9 @@
         <p class="text-gray-900 font-bold text-xl">{answer}</p>
       </div>
 
-      {#if onGotIt}
+      {#if paused && pausePanel}
+        {@render pausePanel()}
+      {:else if onGotIt}
         <!-- 3-button SRS grading -->
         <div class="grid grid-cols-3 gap-2">
           <button

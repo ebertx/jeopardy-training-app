@@ -35,6 +35,10 @@
   let submitting = $state(false);
   let showEndConfirm = $state(false);
   let filtersOpen = $state(false);
+  let pausedForInsight = $state(false);
+  let insight = $state<{ insight: string; hook: string } | null>(null);
+  let insightLoading = $state(false);
+  let insightShown = $state(false); // Explain-on-correct inline display
 
   // Incremented on every filter change; in-flight fetches/prefetches captured
   // before the change discard their results to avoid leaking old-filter data.
@@ -73,10 +77,16 @@
         question = null;
         nextDueAt = res.nextDueAt ?? null;
         dueSoonCount = res.dueSoonCount ?? 0;
+        pausedForInsight = false;
+        insightShown = false;
+        insight = null;
       } else {
         done = false;
         isNew = res.isNew;
         question = res.card;
+        pausedForInsight = false;
+        insightShown = false;
+        insight = null;
       }
     } catch (err: any) {
       if (gen !== filterGen) return;
@@ -98,13 +108,45 @@
       sessionId = result.sessionId;
       runningStats.total++;
       if (rating !== 'wrong') runningStats.correct++;
-      showAnswer = false;
-      await fetchQuestion();
+      if (rating === 'wrong') {
+        // Teaching pause: stay on the card and show the insight.
+        pausedForInsight = true;
+        fetchInsight(question.id);
+      } else {
+        showAnswer = false;
+        await fetchQuestion();
+      }
     } catch (err: any) {
       error = err?.message ?? 'Failed to submit answer';
     } finally {
       submitting = false;
     }
+  }
+
+  async function fetchInsight(questionId: number) {
+    insight = null;
+    insightLoading = true;
+    try {
+      insight = await api.get(`/api/insight/${questionId}`);
+    } catch {
+      insight = null; // 404 (disabled) or failure: pause just shows Next
+    } finally {
+      insightLoading = false;
+    }
+  }
+
+  async function advanceFromPause() {
+    pausedForInsight = false;
+    insight = null;
+    insightShown = false;
+    showAnswer = false;
+    await fetchQuestion();
+  }
+
+  async function handleExplain() {
+    if (!question || insightShown) return;
+    insightShown = true;
+    await fetchInsight(question.id);
   }
 
   async function handleArchive() {
@@ -170,6 +212,14 @@
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     // Modals own Escape and focus trap themselves; don't process answer keys while open.
     if (showEndConfirm || showSessionSummary) return;
+
+    if (pausedForInsight) {
+      if (e.code === 'Space') e.preventDefault();
+      if (['Space', 'Enter', 'Digit1', 'Digit2', 'Digit3'].includes(e.code)) {
+        advanceFromPause();
+      }
+      return;
+    }
 
     if (e.code === 'Space' && !showAnswer) {
       e.preventDefault();
@@ -300,14 +350,51 @@
           onGotIt={() => handleGrade('got_it')}
           onTooEasy={() => handleGrade('too_easy')}
           {submitting}
+          paused={pausedForInsight}
         >
           {#snippet badge()}
             {#if isNew}
               <span class="inline-block px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">New</span>
             {/if}
           {/snippet}
+          {#snippet pausePanel()}
+            <div class="flex flex-col gap-3">
+              {#if insightLoading}
+                <div class="flex items-center gap-2 text-white/70 text-sm py-2">
+                  <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-jeopardy-gold"></div>
+                  Finding the lesson…
+                </div>
+              {:else if insight}
+                <div class="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-left">
+                  <p class="text-white/90 text-sm leading-relaxed">{insight.insight}</p>
+                  <p class="text-jeopardy-gold text-sm font-semibold mt-2">💡 {insight.hook}</p>
+                </div>
+              {/if}
+              <button
+                onclick={advanceFromPause}
+                class="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold text-lg transition-colors"
+              >
+                Next →
+              </button>
+            </div>
+          {/snippet}
           {#snippet additionalActions()}
             {#if showAnswer}
+              {#if !insightShown}
+                <button
+                  onclick={handleExplain}
+                  class="w-full py-2 mb-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/80 text-sm font-medium transition-colors"
+                >
+                  Explain this one
+                </button>
+              {:else if insightLoading}
+                <p class="text-white/60 text-sm text-center py-2">Finding the lesson…</p>
+              {:else if insight}
+                <div class="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-left mb-2">
+                  <p class="text-white/90 text-sm leading-relaxed">{insight.insight}</p>
+                  <p class="text-jeopardy-gold text-sm font-semibold mt-2">💡 {insight.hook}</p>
+                </div>
+              {/if}
               <button
                 onclick={handleArchive}
                 class="w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/80 text-sm font-medium transition-colors"
@@ -323,6 +410,8 @@
       <p class="hidden sm:block text-center text-xs text-gray-400">
         {#if !showAnswer}
           Press <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">Space</kbd> to reveal answer
+        {:else if pausedForInsight}
+          Press any grade key or Space for next clue
         {:else}
           <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">1</kbd> Wrong &nbsp;
           <kbd class="px-1.5 py-0.5 bg-gray-100 rounded border border-gray-300 font-mono">2</kbd> Got it &nbsp;
