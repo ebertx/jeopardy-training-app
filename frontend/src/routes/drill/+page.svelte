@@ -146,6 +146,19 @@
     await fetchInsight(question.id);
   }
 
+  async function handleArchive() {
+    if (!question) return;
+    try {
+      await api.post(`/api/questions/${question.id}/archive`, {
+        reason: 'Missing media or problematic question',
+      });
+      showAnswer = false;
+      await fetchNext();
+    } catch (err: any) {
+      error = err?.message ?? 'Failed to archive question';
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
     if (!started) return;
@@ -337,6 +350,12 @@
                   <p class="text-jeopardy-gold text-sm font-semibold mt-2">💡 {insight.hook}</p>
                 </div>
               {/if}
+              <button
+                onclick={handleArchive}
+                class="w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/80 text-sm font-medium transition-colors"
+              >
+                Archive (problematic question)
+              </button>
             {/if}
           {/snippet}
         </QuestionCard>
