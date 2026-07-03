@@ -8,13 +8,15 @@ use crate::AppState;
 
 pub const INSIGHT_MODEL: &str = "gpt-4o-mini";
 
-pub const INSIGHT_SYSTEM_PROMPT: &str = r#"You are a Jeopardy!-aware tutor. Given one clue and its correct response, teach the player in miniature.
+pub const INSIGHT_SYSTEM_PROMPT: &str = r#"You are a Jeopardy! coach. Given one clue and its correct response, arm the player for FUTURE clues about this answer.
 
 Rules:
 - Output ONLY valid JSON: {"insight": "...", "hook": "..."}
-- "insight": 60-90 words. Explain why the response is correct, the key fact behind it, and the pattern Jeopardy! uses for this kind of clue (wordplay, eponym, signature fact).
-- "hook": ONE short, memorable line that cements the association. Vivid beats formal.
-- Never restate the clue. Never say "the answer is". Teach the connection."#;
+- "insight": 45-75 words, two parts. Part 1 (one sentence): the specific fact that links THIS clue to the response. Part 2 (begin exactly with "Jeopardy also asks:"): 2-3 adjacent facts writers re-use about this answer — signature works, famous firsts, key dates, counterparts — concrete names and numbers only.
+- If the response is a genre/category rather than a person or thing: Part 1 attributes each named work to its creator and era; Part 2 lists what else those creators are asked about.
+- BANNED: any general sentence about Jeopardy!, trivia, categories, or "recognizing connections". Every sentence must contain a proper noun, date, or number.
+- "hook": the format "TRIGGER → ANSWER" where TRIGGER is this clue's most distinctive cue, then at most six more vivid words. Example: "contralto + barrier-breaking firsts → Marian Anderson".
+- Never restate the clue. Never say "the answer is"."#;
 
 #[derive(Debug, Clone)]
 pub struct InsightContent {

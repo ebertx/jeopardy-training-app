@@ -53,11 +53,14 @@ pregeneration task and an eager request race; the DB insert uses
 return: if no `clue_insights` row exists for it, spawn a background task that calls the
 same generate-and-store function. The serving response is never delayed by this.
 
-**Prompt contract** (pinned in code): system prompt instructs a Jeopardy-aware tutor;
-input is clue text, expected response, show category, air date; output STRICT JSON
-`{"insight": "...", "hook": "..."}` — insight explains why the answer is what it is and
-what pattern the clue used; hook is one memorable line. `response_format: json_object`,
-temperature 0.4.
+**Prompt contract** (pinned in code; refined 2026-07-02 after a live prompt lab against
+real cached outputs): system prompt instructs a Jeopardy **coach** that arms the player
+for FUTURE clues; input is clue text, expected response, show category, air date; output
+STRICT JSON `{"insight": "...", "hook": "..."}` — insight is two parts (the linking fact,
+then a "Jeopardy also asks:" clause of 2–3 concrete adjacent facts), with generic
+Jeopardy/trivia sentences banned and every sentence required to carry a proper noun,
+date, or number; hook is a "TRIGGER → ANSWER" association. Genre/category answers get a
+works-attribution branch. `response_format: json_object`, temperature 0.4.
 
 ## 4. Blind-spot packs — detail
 
