@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { getAuth } from '$lib/auth.svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { api } from '$lib/api';
   import QuestionCard from '$lib/components/QuestionCard.svelte';
   import CategoryFilter from '$lib/components/CategoryFilter.svelte';
@@ -177,6 +178,12 @@
       gameTypeFilters = prefs?.gameTypeFilters ?? [];
     } catch {
       // Non-critical
+    }
+
+    const q = page.url.searchParams.get('q');
+    if (q && q.trim()) {
+      queryInput = q;
+      await startDrill();
     }
   });
 </script>

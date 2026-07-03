@@ -33,7 +33,11 @@
     deck?: { learning: number; mastered: number; struggling: number };
   } | null>(null);
 
-  let lastStudy = $state<string | null>(null);
+  let blindspots = $state<{
+    packs: Array<{ id: number; theme: string; diagnosis: string }>;
+    insufficientData: boolean;
+    configured: boolean;
+  } | null>(null);
 
   async function fetchStats() {
     loading = true;
@@ -51,9 +55,9 @@
     fetchStats();
     api.get('/api/practice/status').then((s) => (srs = s)).catch(() => (srs = null));
     api
-      .get('/api/study/latest')
-      .then((s) => (lastStudy = s?.generated_at ?? s?.generatedAt ?? null))
-      .catch(() => (lastStudy = null));
+      .get('/api/blindspots')
+      .then((b) => (blindspots = b))
+      .catch(() => (blindspots = null));
   });
 
   // Re-fetch when toggle changes (but not on initial mount)
@@ -272,20 +276,27 @@
       </div>
     {/if}
 
-    <!-- Study sheets -->
-    <a
-      href="/study"
-      class="bg-white rounded-xl shadow-sm p-5 mb-8 flex items-center justify-between hover:bg-gray-50 transition-colors group block"
-    >
-      <div>
-        <p class="font-semibold text-gray-800">Study sheets</p>
-        <p class="text-sm text-gray-500 mt-0.5">
-          Generate targeted reading from your recent misses{#if lastStudy}
-            — last generated {new Date(lastStudy).toLocaleDateString()}{/if}
-        </p>
-      </div>
-      <span class="text-gray-400 group-hover:text-gray-600 text-lg">&rarr;</span>
-    </a>
+    <!-- Blind spots -->
+    {#if blindspots && blindspots.configured}
+      <a
+        href="/blindspots"
+        class="bg-white rounded-xl shadow-sm p-5 mb-8 flex items-center justify-between hover:bg-gray-50 transition-colors group block"
+      >
+        <div>
+          <p class="font-semibold text-gray-800">Blind spots</p>
+          {#if blindspots.packs.length > 0}
+            <p class="text-sm text-gray-500 mt-0.5">
+              {blindspots.packs.slice(0, 3).map((p) => p.theme).join(' · ')}
+            </p>
+          {:else if blindspots.insufficientData}
+            <p class="text-sm text-gray-500 mt-0.5">Keep practicing — analysis unlocks after a few more misses.</p>
+          {:else}
+            <p class="text-sm text-gray-500 mt-0.5">Analyze your recent misses for patterns.</p>
+          {/if}
+        </div>
+        <span class="text-gray-400 group-hover:text-gray-600 text-lg">&rarr;</span>
+      </a>
+    {/if}
 
     <!-- Action Buttons -->
     <div class="flex flex-wrap gap-3 mb-8">
