@@ -122,6 +122,7 @@ pub async fn next(
             q1 = q1.bind(category);
         }
         if let Some(row) = q1.fetch_optional(&state.pool).await? {
+            crate::routes::practice::pregenerate_insight(&state, row.id);
             return Ok(Json(json!({
                 "done": false, "isNew": false, "card": clue_json(row),
                 "matchCount": match_count, "remaining": remaining,
@@ -145,6 +146,7 @@ pub async fn next(
             q2 = q2.bind(category);
         }
         if let Some(row) = q2.fetch_optional(&state.pool).await? {
+            crate::routes::practice::pregenerate_insight(&state, row.id);
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": clue_json(row),
                 "matchCount": match_count, "remaining": remaining,

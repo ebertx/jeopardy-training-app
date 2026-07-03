@@ -148,7 +148,7 @@ pub fn day_start_utc(now: DateTime<Utc>, tz: Option<&str>) -> DateTime<Utc> {
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct ClueRow {
-    id: i32,
+    pub(crate) id: i32,
     question: Option<String>,
     answer: Option<String>,
     category: Option<String>,
@@ -157,6 +157,21 @@ pub(crate) struct ClueRow {
     round: Option<i32>,
     air_date: Option<chrono::NaiveDate>,
     notes: Option<String>,
+}
+
+/// Fire-and-forget insight pregeneration: by the time the user reads,
+/// reveals, and grades the card, the insight is cached. No-op when the
+/// OpenAI key is unconfigured; failures are logged and swallowed.
+pub(crate) fn pregenerate_insight(state: &Arc<AppState>, question_id: i32) {
+    if state.config.openai_api_key.is_empty() {
+        return;
+    }
+    let st = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::insights::ensure_insight(&st, question_id).await {
+            tracing::warn!("insight pregeneration failed for {question_id}: {e:?}");
+        }
+    });
 }
 
 pub(crate) fn clue_json(row: ClueRow) -> Value {
@@ -223,6 +238,7 @@ pub async fn next(
     .await?;
 
     if let Some(row) = review {
+        pregenerate_insight(&state, row.id);
         return Ok(Json(json!({
             "done": false, "isNew": false, "card": clue_json(row),
             "dueCount": due_count, "newRemaining": new_remaining,
@@ -232,6 +248,7 @@ pub async fn next(
     // 2) A new clue, if the daily allowance remains.
     if new_remaining > 0 {
         if let Some(row) = pick_new_clue(&state, user_id, adaptive, &params).await? {
+            pregenerate_insight(&state, row.id);
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": clue_json(row),
                 "dueCount": due_count, "newRemaining": new_remaining,

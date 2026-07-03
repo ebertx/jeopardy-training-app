@@ -4,6 +4,7 @@ pub mod cards;
 pub mod categories;
 pub mod coryat;
 pub mod drill;
+pub mod insight;
 pub mod mastery;
 pub mod practice;
 pub mod preferences;

@@ -76,6 +76,7 @@ async fn run() {
         .route("/api/practice/grade", post(routes::practice::grade))
         .route("/api/practice/next", get(routes::practice::next))
         .route("/api/practice/status", get(routes::practice::status))
+        .route("/api/insight/{id}", get(routes::insight::get_insight))
         .route("/api/cards", get(routes::cards::list))
         .route("/api/drill/next", get(routes::drill::next))
         .route("/api/mastery/reset", post(routes::mastery::reset))
