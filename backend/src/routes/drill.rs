@@ -22,7 +22,7 @@ const CLUE_COLS: &str =
 /// filtering. `q` and category are ALWAYS bound (never interpolated); game-type
 /// clauses are a fixed whitelist and the prefix is caller-controlled — so the
 /// returned fragment carries no user-controlled string.
-fn match_predicate(
+pub(crate) fn match_predicate(
     prefix: &str,
     q_param: usize,
     cat_param: Option<usize>,

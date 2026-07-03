@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod auth;
+pub mod blindspots;
 pub mod cards;
 pub mod categories;
 pub mod coryat;
@@ -11,4 +12,3 @@ pub mod preferences;
 pub mod questions;
 pub mod quiz;
 pub mod stats;
-pub mod study;
