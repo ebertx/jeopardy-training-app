@@ -93,8 +93,10 @@ pub async fn list(
     if stale && configured && !state.blindspot_inflight.swap(true, Ordering::SeqCst) {
         let st = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = generate_packs_for_user(&st, user_id).await {
-                tracing::warn!("blindspot auto-refresh failed: {e:?}");
+            match generate_packs_for_user(&st, user_id).await {
+                Ok(GenOutcome::Generated(n)) => tracing::info!("blindspot auto-refresh: {n} packs"),
+                Ok(GenOutcome::InsufficientData) => tracing::info!("blindspot auto-refresh: insufficient data"),
+                Err(e) => tracing::warn!("blindspot auto-refresh failed: {e:?}"),
             }
             st.blindspot_inflight.store(false, Ordering::SeqCst);
         });
@@ -115,6 +117,9 @@ pub async fn generate(
         ));
     }
     let outcome = generate_packs_for_user(&state, user_id).await?;
+    if let GenOutcome::Generated(n) = &outcome {
+        tracing::info!("generated {n} blind-spot packs for user {user_id}");
+    }
     let (packs, generated_at, _new_since, _total) = load_state(&state, user_id).await?;
     let insufficient = matches!(outcome, GenOutcome::InsufficientData);
     Ok(Json(response_json(&packs, generated_at, false, insufficient, configured)))
