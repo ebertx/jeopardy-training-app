@@ -314,7 +314,7 @@
             </div>
           {/snippet}
           {#snippet additionalActions()}
-            {#if showAnswer}
+            {#if showAnswer && !pausedForInsight}
               {#if !insightShown}
                 <button
                   onclick={handleExplain}
