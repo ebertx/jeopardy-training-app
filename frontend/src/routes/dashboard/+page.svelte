@@ -5,12 +5,21 @@
   import StatsChart from '$lib/components/StatsChart.svelte';
   import { onMount } from 'svelte';
 
+  interface KindStat { total: number; correct: number; accuracy: number }
   interface Stats {
-    overall: { total: number; correct: number; accuracy: number };
-    categoryBreakdown: Array<{ category: string; total: number; correct: number; accuracy: number }>;
+    overall: KindStat;
+    cold: KindStat;
+    review: KindStat;
+    cold30d: KindStat;
+    mockReadiness: { tests: Array<{ id: number; completedAt: string; score: number }>; best: number | null; latest: number | null; passLine: number };
+    categoryBreakdown: Array<{ category: string; total: number; correct: number; accuracy: number;
+      coldTotal: number; coldCorrect: number; coldAccuracy: number;
+      reviewTotal: number; reviewCorrect: number; reviewAccuracy: number }>;
     recentSessions: Array<{ id: number; started_at: string; completed_at: string; total: number; correct: number }>;
     dailyStats: Array<{ date: string; avgPercentage: number; sessionCount: number }>;
-    dailyAccuracy: Array<{ date: string; total: number; correct: number; accuracy: number }>;
+    dailyAccuracy: Array<{ date: string; total: number; correct: number; accuracy: number;
+      coldTotal: number; coldCorrect: number; coldAccuracy: number;
+      reviewTotal: number; reviewCorrect: number; reviewAccuracy: number }>;
   }
 
   const auth = getAuth();
@@ -80,15 +89,26 @@
           labels: stats.dailyAccuracy.map((d) => d.date),
           datasets: [
             {
-              label: 'Accuracy %',
-              data: stats.dailyAccuracy.map((d) => d.accuracy),
+              label: 'Cold (first attempt) %',
+              data: stats.dailyAccuracy.map((d) => (d.coldTotal > 0 ? d.coldAccuracy : null)),
               borderColor: '#0c47b7',
-              borderWidth: 2,
+              borderWidth: 2.5,
               pointRadius: 3,
-              pointHitRadius: 12,
               pointBackgroundColor: '#0c47b7',
               fill: false,
               tension: 0.3,
+              spanGaps: true,
+            },
+            {
+              label: 'Review %',
+              data: stats.dailyAccuracy.map((d) => (d.reviewTotal > 0 ? d.reviewAccuracy : null)),
+              borderColor: '#9ca3af',
+              borderWidth: 1.5,
+              pointRadius: 2,
+              pointBackgroundColor: '#9ca3af',
+              fill: false,
+              tension: 0.3,
+              spanGaps: true,
             },
           ],
         }
@@ -98,7 +118,7 @@
   let lineChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
+    plugins: { legend: { display: true, position: 'bottom' } },
     scales: {
       y: {
         min: 0,
@@ -152,10 +172,10 @@
           labels: stats.categoryBreakdown.map((c) => c.category),
           datasets: [
             {
-              label: 'Accuracy %',
-              data: stats.categoryBreakdown.map((c) => c.accuracy),
+              label: 'Cold accuracy %',
+              data: stats.categoryBreakdown.map((c) => c.coldAccuracy),
               backgroundColor: stats.categoryBreakdown.map((c) =>
-                c.accuracy >= 75 ? '#22c55e' : c.accuracy >= 50 ? '#f59e0b' : '#ef4444'
+                c.coldAccuracy >= 75 ? '#22c55e' : c.coldAccuracy >= 50 ? '#f59e0b' : '#ef4444'
               ),
               borderWidth: 1,
             },
@@ -177,10 +197,10 @@
     },
   };
 
-  // Category breakdown sorted by accuracy ASC
+  // Category breakdown sorted by cold accuracy ASC
   let sortedCategories = $derived(
     stats
-      ? [...stats.categoryBreakdown].sort((a, b) => a.accuracy - b.accuracy)
+      ? [...stats.categoryBreakdown].sort((a, b) => a.coldAccuracy - b.coldAccuracy)
       : []
   );
 </script>
@@ -329,21 +349,33 @@
         {error}
       </div>
     {:else if stats}
-      <!-- Overall Stats Cards -->
+      <!-- Cold (test-relevant) vs review stats -->
       <div class="flex flex-wrap gap-4 mb-8">
-        <div class="flex-1 min-w-[200px] bg-white rounded-xl shadow p-6">
-          <p class="text-sm font-medium text-gray-500 mb-1">Total Questions</p>
-          <p class="text-3xl font-bold text-jeopardy-blue">{stats.overall.total.toLocaleString()}</p>
-        </div>
-        <div class="flex-1 min-w-[200px] bg-white rounded-xl shadow p-6">
-          <p class="text-sm font-medium text-gray-500 mb-1">Correct Answers</p>
-          <p class="text-3xl font-bold text-green-600">{stats.overall.correct.toLocaleString()}</p>
-        </div>
-        <div class="flex-1 min-w-[200px] bg-white rounded-xl shadow p-6">
-          <p class="text-sm font-medium text-gray-500 mb-1">Overall Accuracy</p>
-          <p class="text-3xl font-bold {stats.overall.accuracy >= 75 ? 'text-green-600' : stats.overall.accuracy >= 50 ? 'text-amber-500' : 'text-red-500'}">
-            {stats.overall.accuracy.toFixed(1)}%
+        <div class="flex-[2] min-w-[240px] bg-white rounded-xl shadow p-6 border-2 border-jeopardy-blue">
+          <p class="text-sm font-medium text-gray-500 mb-1">Cold Accuracy — last 30 days</p>
+          <p class="text-4xl font-extrabold {stats.cold30d.accuracy >= 70 ? 'text-green-600' : stats.cold30d.accuracy >= 55 ? 'text-amber-500' : 'text-red-500'}">
+            {stats.cold30d.accuracy.toFixed(1)}%
           </p>
+          <p class="text-xs text-gray-400 mt-1">
+            First-attempt questions only ({stats.cold30d.total} clues) — the number the Anytime Test measures. All-time: {stats.cold.accuracy.toFixed(1)}%.
+          </p>
+        </div>
+        <div class="flex-1 min-w-[200px] bg-white rounded-xl shadow p-6">
+          <p class="text-sm font-medium text-gray-500 mb-1">Retention (review accuracy)</p>
+          <p class="text-3xl font-bold text-jeopardy-blue">{stats.review.accuracy.toFixed(1)}%</p>
+          <p class="text-xs text-gray-400 mt-1">{stats.review.total.toLocaleString()} SRS reviews</p>
+        </div>
+        <div class="flex-1 min-w-[200px] bg-white rounded-xl shadow p-6">
+          <p class="text-sm font-medium text-gray-500 mb-1">Mock Test Readiness</p>
+          {#if stats.mockReadiness.tests.length > 0}
+            <p class="text-3xl font-bold {(stats.mockReadiness.latest ?? 0) >= stats.mockReadiness.passLine ? 'text-green-600' : 'text-jeopardy-blue'}">
+              {stats.mockReadiness.latest}/50
+            </p>
+            <p class="text-xs text-gray-400 mt-1">Best {stats.mockReadiness.best}/50 · pass line {stats.mockReadiness.passLine} · <a href="/mock" class="text-jeopardy-blue hover:underline">take another →</a></p>
+          {:else}
+            <p class="text-sm text-gray-500 mt-1">No mocks yet.</p>
+            <a href="/mock" class="text-sm font-semibold text-jeopardy-blue hover:underline">Take your first mock test →</a>
+          {/if}
         </div>
       </div>
 
@@ -386,7 +418,8 @@
                   <th class="text-left py-3 px-4 font-semibold text-gray-600">Category</th>
                   <th class="text-right py-3 px-4 font-semibold text-gray-600">Total</th>
                   <th class="text-right py-3 px-4 font-semibold text-gray-600">Correct</th>
-                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Accuracy</th>
+                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Cold</th>
+                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Review</th>
                 </tr>
               </thead>
               <tbody>
@@ -395,8 +428,11 @@
                     <td class="py-3 px-4 text-gray-800">{cat.category}</td>
                     <td class="py-3 px-4 text-right text-gray-600">{cat.total}</td>
                     <td class="py-3 px-4 text-right text-gray-600">{cat.correct}</td>
-                    <td class="py-3 px-4 text-right font-medium {cat.accuracy >= 75 ? 'text-green-600' : cat.accuracy >= 50 ? 'text-amber-500' : 'text-red-500'}">
-                      {cat.accuracy.toFixed(1)}%
+                    <td class="py-3 px-4 text-right font-medium {cat.coldAccuracy >= 70 ? 'text-green-600' : cat.coldAccuracy >= 50 ? 'text-amber-500' : 'text-red-500'}">
+                      {cat.coldTotal > 0 ? `${cat.coldAccuracy.toFixed(1)}% (${cat.coldTotal})` : '—'}
+                    </td>
+                    <td class="py-3 px-4 text-right text-gray-600">
+                      {cat.reviewTotal > 0 ? `${cat.reviewAccuracy.toFixed(1)}% (${cat.reviewTotal})` : '—'}
                     </td>
                   </tr>
                 {/each}
