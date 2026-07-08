@@ -93,6 +93,8 @@ async fn run() {
         .route("/api/coryat/{id}", get(routes::coryat::get_game))
         .route("/api/coryat/{id}/answer", post(routes::coryat::answer))
         .route("/api/coryat/{id}/complete", post(routes::coryat::complete))
+        .route("/api/mock-test", post(routes::mock_test::create))
+        .route("/api/mock-test/current", get(routes::mock_test::current))
         .route("/api/blindspots", get(routes::blindspots::list))
         .route("/api/blindspots/generate", post(routes::blindspots::generate))
         .route("/api/admin/users", get(routes::admin::list_users))
