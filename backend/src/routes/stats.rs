@@ -192,7 +192,7 @@ pub async fn stats(
           SUM(CASE WHEN qa.correct THEN 1 ELSE 0 END)::bigint as correct
         FROM quiz_sessions qs
         LEFT JOIN question_attempts qa ON qs.id = qa.session_id
-        WHERE qs.user_id = $1{}
+        WHERE qs.user_id = $1 AND NOT EXISTS (SELECT 1 FROM mock_tests mt WHERE mt.session_id = qs.id){}
         GROUP BY qs.id, qs.started_at, qs.completed_at
         ORDER BY qs.started_at DESC
         LIMIT 10",
@@ -223,7 +223,7 @@ pub async fn stats(
           COUNT(DISTINCT qs.id)::bigint as session_count
         FROM quiz_sessions qs
         LEFT JOIN question_attempts qa ON qs.id = qa.session_id
-        WHERE qs.user_id = $1 AND qs.completed_at IS NOT NULL{}
+        WHERE qs.user_id = $1 AND qs.completed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM mock_tests mt WHERE mt.session_id = qs.id){}
         GROUP BY DATE(qs.completed_at)
         ORDER BY date ASC",
         review_filter

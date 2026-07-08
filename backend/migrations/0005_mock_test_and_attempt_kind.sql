@@ -1,6 +1,7 @@
 -- 0005: attempt_kind on question_attempts (cold-vs-review tracking) + mock test tables.
 -- Idempotent: safe to re-run (also re-run at deploy cutover to reclassify any
 -- attempts the old binary inserted with the default between migration and deploy).
+-- NOTE: re-running the backfill after mock tests exist will reclassify clues whose only prior attempt is a mock ('firsts' ignores mock rows, but the live grader counts them) — expect small cold-stat shifts if re-run late.
 
 ALTER TABLE question_attempts
   ADD COLUMN IF NOT EXISTS attempt_kind TEXT NOT NULL DEFAULT 'review'
