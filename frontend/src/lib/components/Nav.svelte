@@ -10,6 +10,7 @@
     { href: '/practice', label: 'Practice' },
     { href: '/drill', label: 'Drill' },
     { href: '/mock', label: 'Mock Test' },
+    { href: '/primers', label: 'Primers' },
     { href: '/coryat', label: 'Coryat' },
     { href: '/settings', label: 'Settings' },
   ];

@@ -25,6 +25,7 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state('');
+  let primerLoading = $state<string | null>(null);
 
   function apply(res: any) {
     packs = res.packs ?? [];
@@ -52,6 +53,16 @@
       error = err?.message ?? 'Failed to analyze blind spots';
     } finally {
       refreshing = false;
+    }
+  }
+
+  async function studyPrimer(theme: string) {
+    primerLoading = theme;
+    try {
+      const res = await api.post('/api/primers/generate', { topic: theme, source: 'blindspot' });
+      goto(`/primers/${res.slug}`);
+    } catch (e) {
+      primerLoading = null;
     }
   }
 </script>
@@ -115,12 +126,21 @@
           <div class="bg-white rounded-xl shadow-sm p-5 flex flex-col gap-2">
             <div class="flex items-center gap-2 flex-wrap">
               <h2 class="text-lg font-bold text-gray-800">{pack.theme}</h2>
-              <a
-                href={`/drill?q=${encodeURIComponent(pack.searchQuery)}`}
-                class="ml-auto px-4 py-1.5 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
-              >
-                Drill this ({pack.matchCount} clues)
-              </a>
+              <div class="ml-auto flex items-center gap-2">
+                <button
+                  onclick={() => studyPrimer(pack.theme)}
+                  disabled={primerLoading === pack.theme}
+                  class="px-3 py-1.5 rounded-lg border border-jeopardy-blue text-jeopardy-blue text-sm font-medium hover:bg-jeopardy-blue hover:text-white transition-colors disabled:opacity-50"
+                >
+                  {primerLoading === pack.theme ? 'Preparing primer…' : 'Study primer'}
+                </button>
+                <a
+                  href={`/drill?q=${encodeURIComponent(pack.searchQuery)}`}
+                  class="px-4 py-1.5 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
+                >
+                  Drill this ({pack.matchCount} clues)
+                </a>
+              </div>
             </div>
             <p class="text-sm text-red-600">{pack.diagnosis}</p>
             <p class="text-sm text-gray-700 leading-relaxed">{pack.primer}</p>
