@@ -150,6 +150,11 @@ New behavior: compute `due_count` and `new_remaining` (existing queries). If bot
 - **Frontend:** `/primers` (generated-primer list, canon chips that generate on click, free-text custom topic input, loading state — generation takes ~30–60s); `/primers/[slug]` renders the markdown via `marked` + `DOMPurify` (both bundled, CSP-safe); `/blindspots` gains a "Study primer" button per pack (generates with `source='blindspot'`, then navigates to the primer); Nav gains a Primers link.
 - The read-primer-then-drill loop is the point: the primer page links to `/drill?q=<topic>`.
 
+## Accepted deviations (recorded post-implementation, 2026-07-08)
+
+- **Refresh mid-clue re-serves the clue with a fresh 15 seconds** instead of the spec's submit-as-empty. A refresh-for-more-time vector, accepted because anti-cheat beyond no-lookahead/no-back is explicitly out of scope for a self-honesty tool. Cheap fix if ever wanted: persist a per-position server deadline and auto-empty late submits.
+- **Add-misses-to-SRS cards consume that day's new-card allowance** (they are `srs_cards` created today, served immediately as due reviews). Product behavior, not a bug; the day's fresh-clue intake pauses until tomorrow.
+
 ## Out of scope (explicitly)
 
 - Deleting the dead Next.js `app/`/`prisma/` trees — separate cleanup.
