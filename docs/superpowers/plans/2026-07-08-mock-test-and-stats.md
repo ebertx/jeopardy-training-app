@@ -2097,12 +2097,24 @@ Run: `cd frontend && npm install marked dompurify && npm install -D @types/dompu
 
   $effect(() => {
     const slug = page.params.slug;
+    error = '';
+    primer = null;
+    html = '';
+    let stale = false; // teardown flips this so out-of-order responses are discarded
     api.get(`/api/primers/${slug}`)
       .then(async (p) => {
+        if (stale) return;
+        const rendered = DOMPurify.sanitize(await marked.parse(p.contentMd));
+        if (stale) return;
         primer = p;
-        html = DOMPurify.sanitize(await marked.parse(p.contentMd));
+        html = rendered;
       })
-      .catch((e: any) => (error = e?.message ?? 'Not found'));
+      .catch((e: any) => {
+        if (!stale) error = e?.message ?? 'Not found';
+      });
+    return () => {
+      stale = true;
+    };
   });
 </script>
 
