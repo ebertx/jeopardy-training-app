@@ -156,6 +156,19 @@ pub fn day_start_utc(now: DateTime<Utc>, tz: Option<&str>) -> DateTime<Utc> {
         .unwrap_or(now)
 }
 
+/// Interleave decision: with both new allowance and due reviews available, pick a
+/// new card with probability new/(new+due) so new cards spread through the day
+/// instead of queueing behind every review. Pure (takes `roll`) for testability.
+pub fn serve_new(new_remaining: i64, due_count: i64, roll: f64) -> bool {
+    if new_remaining <= 0 {
+        return false;
+    }
+    if due_count <= 0 {
+        return true;
+    }
+    roll < new_remaining as f64 / (new_remaining + due_count) as f64
+}
+
 #[derive(sqlx::FromRow)]
 pub(crate) struct ClueRow {
     pub(crate) id: i32,
@@ -232,22 +245,25 @@ pub async fn next(
     .await?;
     let new_remaining = (new_per_day as i64 - new_today).max(0);
 
-    // 1) A due review card takes priority.
-    let review: Option<ClueRow> = sqlx::query_as(
-        "SELECT jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
-                jq.clue_value, jq.round, jq.air_date, jq.notes
-         FROM srs_cards sc
-         JOIN jeopardy_questions jq ON jq.id = sc.question_id
-         WHERE sc.user_id = $1 AND sc.suspended = false AND sc.due <= now()
-           AND jq.archived = false
-         ORDER BY sc.due ASC
-         LIMIT 1",
-    )
-    .bind(user_id)
-    .fetch_optional(&state.pool)
-    .await?;
+    // Interleave: decide new-vs-review first, then fall back to the other if the
+    // chosen source comes up empty. Net behavior when only one source has items
+    // is identical to the old strict priority.
+    let want_new = {
+        use rand::Rng;
+        serve_new(new_remaining, due_count, rand::rng().random())
+    };
 
-    if let Some(row) = review {
+    if want_new {
+        if let Some(row) = pick_new_clue(&state, user_id, adaptive, &params).await? {
+            pregenerate_insight(&state, row.id);
+            return Ok(Json(json!({
+                "done": false, "isNew": true, "card": clue_json(row),
+                "dueCount": due_count, "newRemaining": new_remaining,
+            })));
+        }
+    }
+
+    if let Some(row) = fetch_review(&state, user_id).await? {
         pregenerate_insight(&state, row.id);
         return Ok(Json(json!({
             "done": false, "isNew": false, "card": clue_json(row),
@@ -255,7 +271,7 @@ pub async fn next(
         })));
     }
 
-    // 2) A new clue, if the daily allowance remains.
+    // Review pool empty (or roll chose review with none due) — try a new clue.
     if new_remaining > 0 {
         if let Some(row) = pick_new_clue(&state, user_id, adaptive, &params).await? {
             pregenerate_insight(&state, row.id);
@@ -287,6 +303,26 @@ pub async fn next(
         "done": true, "dueCount": due_count, "newRemaining": new_remaining,
         "nextDueAt": next_due_at, "dueSoonCount": due_soon_count,
     })))
+}
+
+/// Highest-priority due review card (unsuspended, due now), if any.
+async fn fetch_review(
+    state: &Arc<AppState>,
+    user_id: i32,
+) -> Result<Option<ClueRow>, sqlx::Error> {
+    sqlx::query_as::<_, ClueRow>(
+        "SELECT jq.id, jq.question, jq.answer, jq.category, jq.classifier_category,
+                jq.clue_value, jq.round, jq.air_date, jq.notes
+         FROM srs_cards sc
+         JOIN jeopardy_questions jq ON jq.id = sc.question_id
+         WHERE sc.user_id = $1 AND sc.suspended = false AND sc.due <= now()
+           AND jq.archived = false
+         ORDER BY sc.due ASC
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
 }
 
 /// Per-category (attempts, correct) for the adaptive window: last 180 days,
@@ -527,6 +563,7 @@ pub async fn status(
 #[cfg(test)]
 mod tests {
     use super::day_start_utc;
+    use super::serve_new;
     use chrono::{TimeZone, Utc};
 
     #[test]
@@ -548,5 +585,19 @@ mod tests {
             day_start_utc(now, None),
             Utc.with_ymd_and_hms(2026, 6, 30, 0, 0, 0).unwrap()
         );
+    }
+
+    #[test]
+    fn serve_new_boundaries() {
+        assert!(!serve_new(0, 5, 0.0));           // no allowance → never new
+        assert!(serve_new(3, 0, 0.99));           // no reviews due → always new
+        assert!(!serve_new(0, 0, 0.5));           // nothing available → not new
+    }
+
+    #[test]
+    fn serve_new_is_proportional() {
+        // p(new) = 10/(10+30) = 0.25
+        assert!(serve_new(10, 30, 0.24));
+        assert!(!serve_new(10, 30, 0.26));
     }
 }
