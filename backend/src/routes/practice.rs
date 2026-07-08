@@ -53,14 +53,24 @@ pub async fn grade(
         }
     };
 
-    // Record the attempt for existing stats/analytics.
+    // Record the attempt. attempt_kind is decided server-side: first-ever attempt
+    // at this question = 'new' (cold), anything later = 'review'.
+    let prior: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM question_attempts WHERE user_id = $1 AND question_id = $2)",
+    )
+    .bind(user_id)
+    .bind(body.question_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let kind = if prior { "review" } else { "new" };
     sqlx::query(
-        "INSERT INTO question_attempts (session_id, question_id, user_id, correct) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO question_attempts (session_id, question_id, user_id, correct, attempt_kind) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(session_id)
     .bind(body.question_id)
     .bind(user_id)
     .bind(rating.is_correct())
+    .bind(kind)
     .execute(&state.pool)
     .await?;
 
