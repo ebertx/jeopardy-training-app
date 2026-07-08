@@ -1,3 +1,4 @@
+mod answer_match;
 mod auth;
 mod blindspots;
 mod config;
