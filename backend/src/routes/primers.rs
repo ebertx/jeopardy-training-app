@@ -10,6 +10,9 @@ use crate::AppState;
 
 /// Same model as the blindspot generator (see PACK_MODEL in blindspots.rs).
 const PRIMER_MODEL: &str = "gpt-4o";
+/// Low temperature: primers are factual reference content, not creative writing.
+/// (Blindspots keep 0.7 because theme-finding benefits from it; confabulation doesn't.)
+const PRIMER_TEMPERATURE: f64 = 0.2;
 
 pub const CANON_TOPICS: &[&str] = &[
     "Opera",
@@ -42,7 +45,25 @@ wrong answer. Never group people by nationality/era/movement unless every member
 (e.g., Mozart is Austrian — never file him under Italian composers). Label things by what they \
 are (an orchestral piece is not an aria). If unsure of a fact, omit it; a shorter correct \
 primer beats a longer wrong one. Where a canonical confusion exists, call out the trap \
-explicitly instead of repeating it.";
+explicitly instead of repeating it. \
+MNEMONIC RULES: mnemonics may only restate facts already established in this primer's core \
+canon section — never introduce a grouping, member, count, or label the canon section does \
+not already support (a catchy-but-wrong grouping is worse than none). Never reproduce \
+traditional rhymes, verses, or long ordered lists from memory — they degrade in \
+transcription; give the plain ordered list of facts instead, or name the traditional \
+mnemonic and what it covers without quoting it.";
+
+/// Second-pass system prompt: adversarial fact-check of the generated draft.
+/// This is the layer that actually catches confabulated groupings and garbled
+/// sequences; the generation-prompt rules only shrink what it has to catch.
+const PRIMER_VERIFY_PROMPT: &str = "You are a ruthless fact-checker for Jeopardy! study \
+material. The user message is a draft study primer in markdown. Verify EVERY factual claim: \
+attributions (who wrote/composed/painted/did what), nationalities, eras, dates, counts, set \
+memberships (exactly which items belong to a named group), ordered sequences (succession \
+lists, chronological orders), quoted verses, and every practice-pair answer. Correct \
+everything wrong. Delete any claim you cannot verify rather than keeping it. Keep the \
+structure, tone, headings, and approximate length otherwise unchanged. \
+Return JSON: {\"content_md\": string} — the corrected primer.";
 
 pub fn slugify(topic: &str) -> String {
     let mut out = String::new();
@@ -141,7 +162,7 @@ pub async fn generate(
         PRIMER_MODEL,
         PRIMER_SYSTEM_PROMPT,
         &user_prompt,
-        0.7,
+        PRIMER_TEMPERATURE,
     )
     .await?;
     let content_md = v["content_md"]
@@ -151,6 +172,31 @@ pub async fn generate(
     if content_md.len() < 500 {
         return Err(AppError::Internal("LLM primer implausibly short".into()));
     }
+
+    // Verification pass: a second call whose only job is fact-checking the draft.
+    // Best-effort — a flaky verifier shouldn't lose the draft, so fall back to it
+    // (with a warning) rather than failing the request.
+    let content_md = match crate::openai::chat_json(
+        &state.config.openai_api_key,
+        PRIMER_MODEL,
+        PRIMER_VERIFY_PROMPT,
+        &content_md,
+        0.0,
+    )
+    .await
+    {
+        Ok(vv) => match vv["content_md"].as_str() {
+            Some(s) if s.len() >= 500 => s.to_string(),
+            _ => {
+                tracing::warn!("primer verify pass returned invalid content for '{topic}'; storing unverified draft");
+                content_md
+            }
+        },
+        Err(e) => {
+            tracing::warn!("primer verify pass failed for '{topic}' ({e:?}); storing unverified draft");
+            content_md
+        }
+    };
 
     // Concurrent-generation guard: first writer wins, everyone re-selects.
     sqlx::query(
