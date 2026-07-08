@@ -2,6 +2,8 @@
 //! and (Task 3) grade typed responses with typo + phonetic forgiveness.
 
 use deunicode::deunicode;
+use rphonetic::{DoubleMetaphone, Encoder};
+use strsim::damerau_levenshtein;
 
 /// Lowercase, ASCII-fold, punctuation→space, collapse whitespace, drop ONE leading article.
 pub fn normalize(s: &str) -> String {
@@ -89,6 +91,42 @@ pub fn accepted_variants(raw: &str) -> Vec<String> {
     out
 }
 
+/// Grade a typed response against the raw accepted-answer string.
+/// Tiers: exact normalized → edit distance (≤1 short / ≤2 long) → per-token Double Metaphone.
+pub fn is_correct(typed: &str, accepted_raw: &str) -> bool {
+    let t = normalize(typed);
+    if t.is_empty() {
+        return false;
+    }
+    let dm = DoubleMetaphone::default();
+
+    for variant in accepted_variants(accepted_raw) {
+        let v = normalize(&variant);
+        if v.is_empty() {
+            continue;
+        }
+        if t == v {
+            return true;
+        }
+        let max_dist = if v.len() < 8 { 1 } else { 2 };
+        if damerau_levenshtein(&t, &v) <= max_dist {
+            return true;
+        }
+        // Phonetic: same token count, every token phonetically equal
+        // ("phonetically correct without adding or dropping sounds").
+        let tt: Vec<&str> = t.split(' ').collect();
+        let vt: Vec<&str> = v.split(' ').collect();
+        if tt.len() == vt.len()
+            && tt.iter().zip(&vt).all(|(a, b)| {
+                a == b || (!dm.encode(a).is_empty() && dm.encode(a) == dm.encode(b))
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +169,39 @@ mod tests {
     #[test]
     fn variants_plain_answer_passes_through() {
         assert_eq!(accepted_variants("Bellerophon"), vec!["Bellerophon".to_string()]);
+    }
+
+    #[test]
+    fn exact_and_case_insensitive_match() {
+        assert!(is_correct("bellerophon", "Bellerophon"));
+        assert!(is_correct("The Volga", "the Volga"));
+    }
+
+    #[test]
+    fn optional_parenthetical_and_alternates_accepted() {
+        assert!(is_correct("cromwell", "(Thomas) Cromwell"));
+        assert!(is_correct("thomas cromwell", "(Thomas) Cromwell"));
+        assert!(is_correct("soviet union", "the U.S.S.R. (or Soviet Union)"));
+    }
+
+    #[test]
+    fn small_typos_accepted_by_edit_distance() {
+        assert!(is_correct("bellerophone", "Bellerophon"));   // 1 insert, long word
+        assert!(is_correct("volga", "the Volga"));
+        assert!(!is_correct("bell", "Bellerophon"));          // not a typo, a different string
+    }
+
+    #[test]
+    fn phonetic_spellings_accepted() {
+        assert!(is_correct("gavara", "(Che) Guevara"));       // phonetically fine
+        assert!(is_correct("olduvye gorge", "Olduvai Gorge")); // per-token phonetic
+    }
+
+    #[test]
+    fn wrong_and_empty_rejected() {
+        assert!(!is_correct("", "Bellerophon"));
+        assert!(!is_correct("   ", "Bellerophon"));
+        assert!(!is_correct("poseidon", "Gaia"));
+        assert!(!is_correct("volgaland river", "the Volga")); // added sounds/words
     }
 }
