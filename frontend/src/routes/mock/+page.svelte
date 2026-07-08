@@ -2,7 +2,7 @@
   import { getAuth } from '$lib/auth.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
   const auth = getAuth();
   $effect(() => {
@@ -31,6 +31,7 @@
 
   // Results state
   let results = $state<any>(null);
+  let overridingPos = $state<number | null>(null);
 
   onMount(async () => {
     // Detect a resumable test without starting a new one.
@@ -84,7 +85,7 @@
     if (submitting || phase !== 'active') return;
     submitting = true;
     stopTimer();
-    const responseMs = Math.min(CLUE_MS, Math.round(CLUE_MS - remainingMs));
+    const responseMs = Math.min(CLUE_MS, Math.max(0, Math.round(CLUE_MS - (deadline - performance.now()))));
     try {
       const res = await api.post('/api/mock-test/answer', {
         position,
@@ -113,13 +114,19 @@
   }
 
   async function toggleOverride(row: any) {
-    const res = await api.post(`/api/mock-test/${testId}/override`, {
-      position: row.position,
-      correct: !row.finalCorrect,
-    });
-    row.finalCorrect = !row.finalCorrect;
-    row.overridden = true;
-    results.score = res.score;
+    if (overridingPos !== null) return;
+    overridingPos = row.position;
+    try {
+      const res = await api.post(`/api/mock-test/${testId}/override`, {
+        position: row.position,
+        correct: !row.finalCorrect,
+      });
+      row.finalCorrect = !row.finalCorrect;
+      row.overridden = true;
+      results.score = res.score;
+    } finally {
+      overridingPos = null;
+    }
   }
 
   let addingMisses = $state(false);
@@ -137,6 +144,8 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && phase === 'active') submit();
   }
+
+  onDestroy(stopTimer);
 
   let secondsLeft = $derived(Math.ceil(remainingMs / 1000));
   let barPct = $derived((remainingMs / CLUE_MS) * 100);
@@ -227,7 +236,8 @@
             </div>
             <button
               onclick={() => toggleOverride(row)}
-              class="shrink-0 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+              disabled={overridingPos !== null}
+              class="shrink-0 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >
               Mark {row.finalCorrect ? 'wrong' : 'right'}
             </button>
