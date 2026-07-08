@@ -7,6 +7,7 @@ pub mod coryat;
 pub mod drill;
 pub mod insight;
 pub mod mastery;
+pub mod mock_test;
 pub mod practice;
 pub mod preferences;
 pub mod questions;
