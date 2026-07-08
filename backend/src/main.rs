@@ -102,6 +102,9 @@ async fn run() {
         .route("/api/mock-test/{id}/add-misses-to-srs", post(routes::mock_test::add_misses_to_srs))
         .route("/api/blindspots", get(routes::blindspots::list))
         .route("/api/blindspots/generate", post(routes::blindspots::generate))
+        .route("/api/primers", get(routes::primers::list))
+        .route("/api/primers/generate", post(routes::primers::generate))
+        .route("/api/primers/{slug}", get(routes::primers::get_primer))
         .route("/api/admin/users", get(routes::admin::list_users))
         .route("/api/admin/approve", post(routes::admin::approve))
         .layer(SetResponseHeaderLayer::overriding(

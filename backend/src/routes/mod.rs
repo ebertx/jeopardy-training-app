@@ -10,6 +10,7 @@ pub mod mastery;
 pub mod mock_test;
 pub mod practice;
 pub mod preferences;
+pub mod primers;
 pub mod questions;
 pub mod quiz;
 pub mod stats;
