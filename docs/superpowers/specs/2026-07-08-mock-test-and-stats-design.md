@@ -137,9 +137,21 @@ New behavior: compute `due_count` and `new_remaining` (existing queries). If bot
 - **sqlx integration tests** (existing pattern if present; else manual verification) for the mock lifecycle: create → 50 answers → complete → override → score recompute.
 - **Manual verification** (`/verify` flow): run a full mock test in the browser, confirm timer auto-submit, refresh-resume, override, readiness tile update; confirm practice interleaving serves a new card early in the day.
 
+## 5. Primer library (added 2026-07-08 after user review)
+
+**Decisions with user:** LLM-generated in-app (reusing the existing OpenAI pipeline), cached in the DB; surfaced on a browsable `/primers` page plus a "Study primer" action on each blindspot pack.
+
+- **Migration 0006:** global (not user-scoped — content is generic, cache is shared) `primers` table: `id`, `slug TEXT UNIQUE`, `topic TEXT`, `content_md TEXT`, `model TEXT`, `source TEXT CHECK IN ('canon','blindspot','custom')`, `requested_by INT REFERENCES users(id)`, `created_at TIMESTAMPTZ`.
+- **Backend** (`backend/src/routes/primers.rs`):
+  - `GET /api/primers` → `{primers: [{id, slug, topic, source, createdAt}], canon: [...], configured}` where `canon` is the fixed starter-topic list and `configured` mirrors the blindspots pattern (`openai_api_key` non-empty).
+  - `GET /api/primers/{slug}` → full row with `contentMd`.
+  - `POST /api/primers/generate` `{topic, source?}` → slugify topic; return the cached primer if the slug exists; else call `openai::chat_json` (same model constant value as the blindspot generator) with a system prompt requesting JSON `{title, content_md}`: a 1,500–2,500-word markdown study guide containing (a) how the topic shows up in Jeopardy clues, (b) the core canon as lists/tables (e.g., composer–work–plot–famous-aria for opera), (c) common clue angles and pivot words, (d) mnemonic hooks, (e) 10 sample clue→response pairs. Insert with `ON CONFLICT (slug) DO NOTHING` then re-select (concurrent-generation guard). `BadRequest` when the API key is unconfigured.
+- **Canon starter topics** (chips on `/primers`): Opera; Greek & Roman Mythology; Norse Mythology; Art Movements & Artists; Baseball History; New Deal & FDR; Civil Rights Movement; Shakespeare; U.S. Presidents; World Geography — Capitals & Rivers; the Bible; British Royals & History.
+- **Frontend:** `/primers` (generated-primer list, canon chips that generate on click, free-text custom topic input, loading state — generation takes ~30–60s); `/primers/[slug]` renders the markdown via `marked` + `DOMPurify` (both bundled, CSP-safe); `/blindspots` gains a "Study primer" button per pack (generates with `source='blindspot'`, then navigates to the primer); Nav gains a Primers link.
+- The read-primer-then-drill loop is the point: the primer page links to `/drill?q=<topic>`.
+
 ## Out of scope (explicitly)
 
-- Topic primer pages (structured study guides) — discussed, deferred to a follow-up design.
 - Deleting the dead Next.js `app/`/`prisma/` trees — separate cleanup.
 - Wordplay-style category simulation (Before & After etc.) — the DB's real categories already include these clue styles.
 - Anti-cheat beyond no-lookahead/no-back (this is a self-honesty tool).
