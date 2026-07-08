@@ -148,6 +148,9 @@ pub async fn current(
     let (test_id, ids, idx) = active_test(&state, auth.user_id)
         .await?
         .ok_or_else(|| AppError::NotFound("No active mock test".into()))?;
+    if idx as i64 >= TEST_SIZE || idx as usize >= ids.len() {
+        return Err(AppError::NotFound("No active mock test".into()));
+    }
     let qid = ids[idx as usize];
     // `answer` is the clue text; `question` (the accepted response) is NOT sent mid-test.
     let (category, text): (Option<String>, Option<String>) = sqlx::query_as(
@@ -161,6 +164,242 @@ pub async fn current(
         "testId": test_id, "position": idx, "total": TEST_SIZE,
         "clue": { "id": qid, "category": category, "text": text },
     })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnswerBody {
+    pub position: i32,
+    pub typed_answer: String,
+    pub response_ms: i32,
+}
+
+pub async fn answer(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Json(body): Json<AnswerBody>,
+) -> Result<Json<Value>, AppError> {
+    let user_id = auth.user_id;
+    let (test_id, ids, idx) = active_test(&state, user_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("No active mock test".into()))?;
+    if idx as i64 >= TEST_SIZE || idx as usize >= ids.len() {
+        return Err(AppError::NotFound("No active mock test".into()));
+    }
+    if body.position != idx {
+        return Err(AppError::Conflict(format!("Expected position {idx}")));
+    }
+    let qid = ids[idx as usize];
+    let (accepted,): (Option<String>,) =
+        sqlx::query_as("SELECT question FROM jeopardy_questions WHERE id = $1")
+            .bind(qid)
+            .fetch_one(&state.pool)
+            .await?;
+    let correct = accepted
+        .as_deref()
+        .map(|a| is_correct(&body.typed_answer, a))
+        .unwrap_or(false);
+
+    sqlx::query(
+        "INSERT INTO mock_test_answers
+           (mock_test_id, question_id, position, typed_answer, response_ms, auto_correct, final_correct)
+         VALUES ($1, $2, $3, $4, $5, $6, $6)
+         ON CONFLICT (mock_test_id, position) DO NOTHING",
+    )
+    .bind(test_id).bind(qid).bind(idx)
+    .bind(&body.typed_answer).bind(body.response_ms).bind(correct)
+    .execute(&state.pool)
+    .await?;
+
+    let (session_id,): (i32,) =
+        sqlx::query_as("SELECT session_id FROM mock_tests WHERE id = $1")
+            .bind(test_id)
+            .fetch_one(&state.pool)
+            .await?;
+    sqlx::query(
+        "INSERT INTO question_attempts (session_id, question_id, user_id, correct, attempt_kind)
+         VALUES ($1, $2, $3, $4, 'mock')",
+    )
+    .bind(session_id).bind(qid).bind(user_id).bind(correct)
+    .execute(&state.pool)
+    .await?;
+
+    // Atomic: bump current_index and, if this was the last clue, set completed_at/score
+    // in the same statement so a crash between two separate UPDATEs can never leave
+    // current_index == TEST_SIZE on an uncompleted test.
+    let next_idx = idx + 1;
+    let (score,): (Option<i32>,) = sqlx::query_as(
+        "UPDATE mock_tests SET current_index = $2,
+           completed_at = CASE WHEN $2 >= $3 THEN now() ELSE completed_at END,
+           score = CASE WHEN $2 >= $3 THEN
+             (SELECT COUNT(*) FILTER (WHERE final_correct) FROM mock_test_answers WHERE mock_test_id = $1)::int
+           ELSE score END
+         WHERE id = $1
+         RETURNING score",
+    )
+    .bind(test_id).bind(next_idx).bind(TEST_SIZE as i32)
+    .fetch_one(&state.pool)
+    .await?;
+    if next_idx as i64 >= TEST_SIZE {
+        sqlx::query("UPDATE quiz_sessions SET completed_at = now() WHERE id = $1")
+            .bind(session_id)
+            .execute(&state.pool)
+            .await?;
+        return Ok(Json(json!({ "completed": true, "position": next_idx, "total": TEST_SIZE, "score": score })));
+    }
+    Ok(Json(json!({ "completed": false, "position": next_idx, "total": TEST_SIZE })))
+}
+
+/// Loads a completed, owned test or errors.
+async fn owned_completed_test(
+    state: &Arc<AppState>,
+    user_id: i32,
+    test_id: i32,
+) -> Result<(i32, Option<i32>), AppError> {
+    let row: Option<(i32, Option<i32>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT session_id, score, completed_at FROM mock_tests WHERE id = $1 AND user_id = $2",
+    )
+    .bind(test_id).bind(user_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    match row {
+        None => Err(AppError::NotFound("Mock test not found".into())),
+        Some((_, _, None)) => Err(AppError::BadRequest("Mock test not completed".into())),
+        Some((session_id, score, Some(_))) => Ok((session_id, score)),
+    }
+}
+
+pub async fn results(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(test_id): Path<i32>,
+) -> Result<Json<Value>, AppError> {
+    let _ = owned_completed_test(&state, auth.user_id, test_id).await?;
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        position: i32,
+        typed_answer: String,
+        response_ms: i32,
+        auto_correct: bool,
+        overridden: bool,
+        final_correct: bool,
+        clue: Option<String>,
+        accepted: Option<String>,
+        category: Option<String>,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT mta.position, mta.typed_answer, mta.response_ms, mta.auto_correct,
+                mta.overridden, mta.final_correct,
+                jq.answer AS clue, jq.question AS accepted, jq.category
+         FROM mock_test_answers mta
+         JOIN jeopardy_questions jq ON jq.id = mta.question_id
+         WHERE mta.mock_test_id = $1
+         ORDER BY mta.position",
+    )
+    .bind(test_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let (score, completed_at): (Option<i32>, Option<DateTime<Utc>>) =
+        sqlx::query_as("SELECT score, completed_at FROM mock_tests WHERE id = $1")
+            .bind(test_id)
+            .fetch_one(&state.pool)
+            .await?;
+
+    let answers: Vec<Value> = rows.into_iter().map(|r| json!({
+        "position": r.position, "clue": r.clue, "category": r.category,
+        "accepted": r.accepted, "typed": r.typed_answer, "responseMs": r.response_ms,
+        "autoCorrect": r.auto_correct, "overridden": r.overridden, "finalCorrect": r.final_correct,
+    })).collect();
+
+    Ok(Json(json!({ "score": score, "passLine": PASS_LINE, "completedAt": completed_at, "answers": answers })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverrideBody {
+    pub position: i32,
+    pub correct: bool,
+}
+
+pub async fn override_verdict(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(test_id): Path<i32>,
+    Json(body): Json<OverrideBody>,
+) -> Result<Json<Value>, AppError> {
+    let (session_id, _) = owned_completed_test(&state, auth.user_id, test_id).await?;
+
+    let qid: Option<i32> = sqlx::query_scalar(
+        "UPDATE mock_test_answers SET overridden = true, final_correct = $3
+         WHERE mock_test_id = $1 AND position = $2 RETURNING question_id",
+    )
+    .bind(test_id).bind(body.position).bind(body.correct)
+    .fetch_optional(&state.pool)
+    .await?;
+    let qid = qid.ok_or_else(|| AppError::NotFound("No answer at that position".into()))?;
+
+    sqlx::query(
+        "UPDATE question_attempts SET correct = $4
+         WHERE session_id = $1 AND question_id = $2 AND user_id = $3 AND attempt_kind = 'mock'",
+    )
+    .bind(session_id).bind(qid).bind(auth.user_id).bind(body.correct)
+    .execute(&state.pool)
+    .await?;
+
+    let (score,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE final_correct) FROM mock_test_answers WHERE mock_test_id = $1",
+    )
+    .bind(test_id)
+    .fetch_one(&state.pool)
+    .await?;
+    sqlx::query("UPDATE mock_tests SET score = $2 WHERE id = $1")
+        .bind(test_id).bind(score as i32)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(Json(json!({ "score": score })))
+}
+
+pub async fn add_misses_to_srs(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(test_id): Path<i32>,
+) -> Result<Json<Value>, AppError> {
+    let _ = owned_completed_test(&state, auth.user_id, test_id).await?;
+    let added: i64 = sqlx::query_scalar(
+        "WITH ins AS (
+           INSERT INTO srs_cards (user_id, question_id)
+           SELECT $2, mta.question_id
+           FROM mock_test_answers mta
+           WHERE mta.mock_test_id = $1 AND mta.final_correct = false
+           ON CONFLICT (user_id, question_id) DO NOTHING
+           RETURNING 1
+         ) SELECT COUNT(*) FROM ins",
+    )
+    .bind(test_id).bind(auth.user_id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(json!({ "added": added })))
+}
+
+pub async fn history(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let rows: Vec<(i32, Option<DateTime<Utc>>, Option<i32>)> = sqlx::query_as(
+        "SELECT id, completed_at, score FROM mock_tests
+         WHERE user_id = $1 AND completed_at IS NOT NULL
+         ORDER BY completed_at DESC",
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let best = rows.iter().filter_map(|(_, _, s)| *s).max();
+    let tests: Vec<Value> = rows.into_iter()
+        .map(|(id, at, s)| json!({ "id": id, "completedAt": at, "score": s }))
+        .collect();
+    Ok(Json(json!({ "tests": tests, "best": best, "passLine": PASS_LINE })))
 }
 
 #[cfg(test)]
