@@ -35,7 +35,14 @@ e.g. for opera: composer | work | plot one-liner | famous aria); \
 ## Clue angles & pivot words (the phrasings and giveaway words clues hinge on); \
 ## Mnemonic hooks (memorable groupings and associations); \
 ## Practice pairs (10 sample clue -> correct response pairs in Jeopardy style). \
-Be specific and factual; prefer canonical, frequently-tested material over trivia depth.";
+Be specific and factual; prefer canonical, frequently-tested material over trivia depth. \
+ACCURACY RULES: attribution facts (nationality, era, who-wrote/painted/composed-what) must be \
+exact — they are the pivots Jeopardy clues hinge on, and an error here teaches the player a \
+wrong answer. Never group people by nationality/era/movement unless every member truly belongs \
+(e.g., Mozart is Austrian — never file him under Italian composers). Label things by what they \
+are (an orchestral piece is not an aria). If unsure of a fact, omit it; a shorter correct \
+primer beats a longer wrong one. Where a canonical confusion exists, call out the trap \
+explicitly instead of repeating it.";
 
 pub fn slugify(topic: &str) -> String {
     let mut out = String::new();
