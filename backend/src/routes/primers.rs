@@ -36,7 +36,9 @@ GitHub-flavored markdown study guide with these sections: \
 ## The core canon (the facts that cover most clues, as markdown tables or tight lists — \
 e.g. for opera: composer | work | plot one-liner | famous aria); \
 ## Clue angles & pivot words (the phrasings and giveaway words clues hinge on); \
-## Mnemonic hooks (memorable groupings and associations); \
+## Common traps & confusions (the mix-ups clue writers exploit: commonly confused pairs, \
+famous misattributions, items people wrongly include in this topic's canonical groups — \
+state each trap and the correct fact); \
 ## Practice pairs (10 sample clue -> correct response pairs in Jeopardy style). \
 Be specific and factual; prefer canonical, frequently-tested material over trivia depth. \
 ACCURACY RULES: attribution facts (nationality, era, who-wrote/painted/composed-what) must be \
@@ -46,12 +48,11 @@ wrong answer. Never group people by nationality/era/movement unless every member
 are (an orchestral piece is not an aria). If unsure of a fact, omit it; a shorter correct \
 primer beats a longer wrong one. Where a canonical confusion exists, call out the trap \
 explicitly instead of repeating it. \
-MNEMONIC RULES: mnemonics may only restate facts already established in this primer's core \
-canon section — never introduce a grouping, member, count, or label the canon section does \
-not already support (a catchy-but-wrong grouping is worse than none). Never reproduce \
-traditional rhymes, verses, or long ordered lists from memory — they degrade in \
-transcription; give the plain ordered list of facts instead, or name the traditional \
-mnemonic and what it covers without quoting it.";
+Do NOT invent mnemonics or acronyms. Never reproduce traditional rhymes or verses from \
+memory — give the plain ordered list of facts instead. \
+TOPIC MEMBERSHIP: every item in the core canon must genuinely belong to the topic's \
+category — if a famous adjacent figure does not belong (e.g., Julius Caesar was never a \
+Roman emperor), put that in Common traps, not in the canon table.";
 
 /// Second-pass system prompt: adversarial fact-check of the generated draft.
 /// This is the layer that actually catches confabulated groupings and garbled
@@ -60,7 +61,11 @@ const PRIMER_VERIFY_PROMPT: &str = "You are a ruthless fact-checker for Jeopardy
 material. The user message is a draft study primer in markdown. Verify EVERY factual claim: \
 attributions (who wrote/composed/painted/did what), nationalities, eras, dates, counts, set \
 memberships (exactly which items belong to a named group), ordered sequences (succession \
-lists, chronological orders), quoted verses, and every practice-pair answer. Correct \
+lists, chronological orders), quoted verses, and every practice-pair answer. Also verify \
+TOPIC MEMBERSHIP: every item listed in the core canon must truly belong to the topic's \
+category (e.g., Julius Caesar in a Roman Emperors table is wrong — he was never emperor; \
+move such items to the traps section with the correct fact). Delete any invented mnemonic \
+or acronym whose letters do not decode to the facts it claims to encode. Correct \
 everything wrong. Delete any claim you cannot verify rather than keeping it. Keep the \
 structure, tone, headings, and approximate length otherwise unchanged. \
 Return JSON: {\"content_md\": string} — the corrected primer.";
