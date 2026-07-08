@@ -1291,7 +1291,7 @@ git commit -m "feat(stats): cold/review split + mock readiness in /api/stats"
   import { getAuth } from '$lib/auth.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
   const auth = getAuth();
   $effect(() => {
@@ -1344,6 +1344,8 @@ git commit -m "feat(stats): cold/review split + mock readiness in /api/stats"
     }, 100);
   }
 
+  onDestroy(stopTimer); // never let the timer keep firing after navigating away mid-test
+
   async function loadCurrent() {
     const cur = await api.get('/api/mock-test/current');
     testId = cur.testId;
@@ -1373,7 +1375,7 @@ git commit -m "feat(stats): cold/review split + mock readiness in /api/stats"
     if (submitting || phase !== 'active') return;
     submitting = true;
     stopTimer();
-    const responseMs = Math.min(CLUE_MS, Math.round(CLUE_MS - remainingMs));
+    const responseMs = Math.min(CLUE_MS, Math.max(0, Math.round(CLUE_MS - (deadline - performance.now()))));
     try {
       const res = await api.post('/api/mock-test/answer', {
         position,
@@ -1401,14 +1403,21 @@ git commit -m "feat(stats): cold/review split + mock readiness in /api/stats"
     phase = 'results';
   }
 
+  let overridingPos = $state<number | null>(null);
   async function toggleOverride(row: any) {
-    const res = await api.post(`/api/mock-test/${testId}/override`, {
-      position: row.position,
-      correct: !row.finalCorrect,
-    });
-    row.finalCorrect = !row.finalCorrect;
-    row.overridden = true;
-    results.score = res.score;
+    if (overridingPos !== null) return; // one override in flight at a time
+    overridingPos = row.position;
+    try {
+      const res = await api.post(`/api/mock-test/${testId}/override`, {
+        position: row.position,
+        correct: !row.finalCorrect,
+      });
+      row.finalCorrect = !row.finalCorrect;
+      row.overridden = true;
+      results.score = res.score;
+    } finally {
+      overridingPos = null;
+    }
   }
 
   let addingMisses = $state(false);
@@ -1516,7 +1525,8 @@ git commit -m "feat(stats): cold/review split + mock readiness in /api/stats"
             </div>
             <button
               onclick={() => toggleOverride(row)}
-              class="shrink-0 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+              disabled={overridingPos !== null}
+              class="shrink-0 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >
               Mark {row.finalCorrect ? 'wrong' : 'right'}
             </button>
