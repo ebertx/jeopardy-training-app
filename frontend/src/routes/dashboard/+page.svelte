@@ -15,8 +15,6 @@
     categoryBreakdown: Array<{ category: string; total: number; correct: number; accuracy: number;
       coldTotal: number; coldCorrect: number; coldAccuracy: number;
       reviewTotal: number; reviewCorrect: number; reviewAccuracy: number }>;
-    recentSessions: Array<{ id: number; started_at: string; completed_at: string; total: number; correct: number }>;
-    dailyStats: Array<{ date: string; avgPercentage: number; sessionCount: number }>;
     dailyAccuracy: Array<{ date: string; total: number; correct: number; accuracy: number;
       coldTotal: number; coldCorrect: number; coldAccuracy: number;
       reviewTotal: number; reviewCorrect: number; reviewAccuracy: number }>;
@@ -31,7 +29,6 @@
   let stats = $state<Stats | null>(null);
   let loading = $state(true);
   let error = $state('');
-  let includeReviewed = $state(false);
 
   let srs = $state<{
     dueCount: number;
@@ -52,7 +49,7 @@
     loading = true;
     error = '';
     try {
-      stats = await api.get(`/api/stats?includeReviewed=${includeReviewed}`);
+      stats = await api.get('/api/stats');
     } catch (err: any) {
       error = err?.message ?? 'Failed to load stats';
     } finally {
@@ -67,18 +64,6 @@
       .get('/api/blindspots')
       .then((b) => (blindspots = b))
       .catch(() => (blindspots = null));
-  });
-
-  // Re-fetch when toggle changes (but not on initial mount)
-  let initialized = false;
-  $effect(() => {
-    // Access includeReviewed to track the dependency
-    const _toggle = includeReviewed;
-    if (!initialized) {
-      initialized = true;
-      return;
-    }
-    fetchStats();
   });
 
   // Daily accuracy (last 30 days), computed from every attempt — unlike the old
@@ -213,16 +198,6 @@
   <div class="max-w-6xl mx-auto">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
       <h1 class="text-3xl font-bold text-jeopardy-blue">Dashboard</h1>
-
-      <!-- Toggle -->
-      <label class="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
-        <input
-          type="checkbox"
-          bind:checked={includeReviewed}
-          class="w-4 h-4 rounded border-gray-300 text-jeopardy-blue focus:ring-jeopardy-blue"
-        />
-        Include Review Sessions
-      </label>
     </div>
 
     <!-- SRS Practice Summary -->
