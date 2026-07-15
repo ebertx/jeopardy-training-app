@@ -30,6 +30,11 @@
   let loading = $state(true);
   let error = $state('');
 
+  // Phone layout below Tailwind's `sm` breakpoint. SSR sees 0 → desktop
+  // config; corrected on hydration (charts are client-only anyway).
+  let innerWidth = $state(0);
+  let isMobile = $derived(innerWidth > 0 && innerWidth < 640);
+
   let srs = $state<{
     dueCount: number;
     newRemaining: number;
@@ -115,14 +120,16 @@
     },
   };
 
-  // 14-day due forecast, padded so quiet days render as true zeros.
+  // Due forecast (7 days on phones, 14 otherwise), padded so quiet days
+  // render as true zeros.
+  let forecastDays = $derived(isMobile ? 7 : 14);
   let forecastChartData = $derived.by(() => {
     if (!srs || !srs.forecast) return null;
     const counts = new Map(srs.forecast.map((f) => [f.date, f.count]));
     const start = new Date();
     const labels: string[] = [];
     const data: number[] = [];
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < forecastDays; i++) {
       const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + i));
       const key = d.toISOString().slice(0, 10);
       labels.push(i === 0 ? 'Today' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', timeZone: 'UTC' }));
@@ -170,18 +177,41 @@
       : null
   );
 
-  let barChartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-      y: {
-        min: 0,
-        max: 100,
-        title: { display: true, text: 'Accuracy %' },
-      },
-      x: { ticks: { maxRotation: 45 } },
-    },
-  };
+  // Phones flip to horizontal bars: category names read normally on the
+  // y-axis instead of 13 rotated labels crammed into ~350px.
+  let barChartOptions = $derived(
+    isMobile
+      ? {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: 'y' as const,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              min: 0,
+              max: 100,
+              title: { display: true, text: 'Cold accuracy %' },
+            },
+          },
+        }
+      : {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              title: { display: true, text: 'Accuracy %' },
+            },
+            x: { ticks: { maxRotation: 45 } },
+          },
+        }
+  );
+
+  // Horizontal bars need room per row; vertical keeps the fixed card height.
+  let barChartHeight = $derived(
+    isMobile ? Math.max(220, (stats?.categoryBreakdown.length ?? 0) * 28 + 60) : 300
+  );
 
   // Category breakdown sorted by cold accuracy ASC
   let sortedCategories = $derived(
@@ -193,6 +223,8 @@
 <svelte:head>
   <title>Dashboard — Jeopardy! Training</title>
 </svelte:head>
+
+<svelte:window bind:innerWidth />
 
 
 <div class="min-h-screen bg-gray-50 py-8 px-4">
@@ -219,14 +251,14 @@
           </div>
           <a
             href="/practice"
-            class="ml-auto self-center px-4 py-2 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
+            class="w-full text-center sm:w-auto sm:ml-auto self-center px-4 py-2 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 transition-colors"
           >
             Practice &rarr;
           </a>
         </div>
         {#if forecastChartData}
           <div class="mt-5 pt-4 border-t border-gray-100">
-            <h2 class="text-sm font-semibold text-gray-600 mb-2">Reviews due — next 14 days</h2>
+            <h2 class="text-sm font-semibold text-gray-600 mb-2">Reviews due — next {forecastDays} days</h2>
             <div class="h-36">
               <StatsChart type="bar" data={forecastChartData} options={forecastChartOptions} />
             </div>
@@ -240,22 +272,25 @@
               Practice draws new clues from weaker categories more often. The bar and percentage
               show each category's share of your new clues, weakest first.
             </p>
-            <div class="flex flex-col gap-1.5">
+            <div class="flex flex-col gap-2.5 sm:gap-1.5">
               {#each srs.adaptiveWeights as w (w.category)}
-                <div class="flex items-center gap-3 text-sm">
-                  <span class="w-52 shrink-0 truncate text-gray-700">{w.category}</span>
-                  <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      class="h-full bg-jeopardy-blue rounded-full"
-                      style="width: {maxWeight > 0 ? (w.weight / maxWeight) * 100 : 0}%"
-                    ></div>
-                  </div>
-                  <span class="w-10 shrink-0 text-right text-xs font-semibold text-gray-600">
-                    {Math.round(w.weight * 100)}%
-                  </span>
-                  <span class="w-32 shrink-0 text-right text-xs text-gray-400">
+                <!-- Phones: two lines (name + stats, then bar + share). Desktop: one row. -->
+                <div class="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 text-sm">
+                  <span class="order-1 flex-1 sm:flex-none sm:w-52 truncate text-gray-700">{w.category}</span>
+                  <span class="order-2 sm:order-3 shrink-0 sm:w-32 text-right text-xs text-gray-400">
                     {w.attempts > 0 ? `${Math.round(w.accuracy)}% right` : 'untried'} · {w.attempts} tries
                   </span>
+                  <div class="order-3 sm:order-2 flex items-center gap-2 w-full sm:w-auto sm:flex-1">
+                    <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-jeopardy-blue rounded-full"
+                        style="width: {maxWeight > 0 ? (w.weight / maxWeight) * 100 : 0}%"
+                      ></div>
+                    </div>
+                    <span class="w-10 shrink-0 text-right text-xs font-semibold text-gray-600">
+                      {Math.round(w.weight * 100)}%
+                    </span>
+                  </div>
                 </div>
               {/each}
             </div>
@@ -384,7 +419,7 @@
       {#if stats.categoryBreakdown.length > 0 && barChartData}
         <div class="bg-white rounded-xl shadow p-6 mb-8">
           <h2 class="text-lg font-semibold text-gray-800 mb-4">Category Performance</h2>
-          <div style="height: 300px;">
+          <div style="height: {barChartHeight}px;">
             <StatsChart type="bar" data={barChartData} options={barChartOptions} />
           </div>
         </div>
@@ -402,23 +437,23 @@
             <table class="min-w-full text-sm">
               <thead>
                 <tr class="border-b border-gray-200">
-                  <th class="text-left py-3 px-4 font-semibold text-gray-600">Category</th>
-                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Total</th>
-                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Correct</th>
-                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Cold</th>
-                  <th class="text-right py-3 px-4 font-semibold text-gray-600">Review</th>
+                  <th class="text-left py-3 px-2 sm:px-4 font-semibold text-gray-600">Category</th>
+                  <th class="hidden sm:table-cell text-right py-3 px-2 sm:px-4 font-semibold text-gray-600">Total</th>
+                  <th class="hidden sm:table-cell text-right py-3 px-2 sm:px-4 font-semibold text-gray-600">Correct</th>
+                  <th class="text-right py-3 px-2 sm:px-4 font-semibold text-gray-600">Cold</th>
+                  <th class="text-right py-3 px-2 sm:px-4 font-semibold text-gray-600">Review</th>
                 </tr>
               </thead>
               <tbody>
                 {#each sortedCategories as cat}
                   <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                    <td class="py-3 px-4 text-gray-800">{cat.category}</td>
-                    <td class="py-3 px-4 text-right text-gray-600">{cat.total}</td>
-                    <td class="py-3 px-4 text-right text-gray-600">{cat.correct}</td>
-                    <td class="py-3 px-4 text-right font-medium {cat.coldAccuracy >= 70 ? 'text-green-600' : cat.coldAccuracy >= 50 ? 'text-amber-500' : 'text-red-500'}">
+                    <td class="py-3 px-2 sm:px-4 text-gray-800">{cat.category}</td>
+                    <td class="hidden sm:table-cell py-3 px-2 sm:px-4 text-right text-gray-600">{cat.total}</td>
+                    <td class="hidden sm:table-cell py-3 px-2 sm:px-4 text-right text-gray-600">{cat.correct}</td>
+                    <td class="py-3 px-2 sm:px-4 text-right font-medium {cat.coldAccuracy >= 70 ? 'text-green-600' : cat.coldAccuracy >= 50 ? 'text-amber-500' : 'text-red-500'}">
                       {cat.coldTotal > 0 ? `${cat.coldAccuracy.toFixed(1)}% (${cat.coldTotal})` : '—'}
                     </td>
-                    <td class="py-3 px-4 text-right text-gray-600">
+                    <td class="py-3 px-2 sm:px-4 text-right text-gray-600">
                       {cat.reviewTotal > 0 ? `${cat.reviewAccuracy.toFixed(1)}% (${cat.reviewTotal})` : '—'}
                     </td>
                   </tr>
