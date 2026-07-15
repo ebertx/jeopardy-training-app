@@ -36,6 +36,7 @@
     reviewedToday: number;
     forecast: Array<{ date: string; count: number }>;
     adaptiveWeights?: Array<{ category: string; attempts: number; accuracy: number; weight: number }>;
+    adaptiveWindow?: '180d' | 'all' | null;
     deck?: { learning: number; mastered: number; struggling: number };
   } | null>(null);
 
@@ -232,27 +233,38 @@
           </div>
         {/if}
         {#if srs.adaptiveWeights && srs.adaptiveWeights.length > 0}
+          {@const maxWeight = Math.max(...srs.adaptiveWeights.map((w) => w.weight))}
           <div class="mt-5 pt-4 border-t border-gray-100">
             <h2 class="text-sm font-semibold text-gray-600 mb-1">Focus areas</h2>
-            <p class="text-xs text-gray-400 mb-3">New clues favor your weaker categories.</p>
+            <p class="text-xs text-gray-400 mb-3">
+              Practice draws new clues from weaker categories more often. The bar and percentage
+              show each category's share of your new clues, weakest first.
+            </p>
             <div class="flex flex-col gap-1.5">
-              {#each srs.adaptiveWeights as w, i (w.category)}
+              {#each srs.adaptiveWeights as w (w.category)}
                 <div class="flex items-center gap-3 text-sm">
-                  <span class="w-52 shrink-0 truncate text-gray-700">
-                    {w.category}
-                    {#if i < 3}
-                      <span class="ml-1 px-1.5 py-0.5 rounded-full bg-jeopardy-gold/20 text-jeopardy-blue text-[10px] font-bold uppercase tracking-wide">Targeted</span>
-                    {/if}
-                  </span>
+                  <span class="w-52 shrink-0 truncate text-gray-700">{w.category}</span>
                   <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div class="h-full bg-jeopardy-blue rounded-full" style="width: {Math.round(w.weight * 100)}%"></div>
+                    <div
+                      class="h-full bg-jeopardy-blue rounded-full"
+                      style="width: {maxWeight > 0 ? (w.weight / maxWeight) * 100 : 0}%"
+                    ></div>
                   </div>
-                  <span class="w-28 shrink-0 text-right text-xs text-gray-500">
-                    {Math.round(w.accuracy)}% · {w.attempts} tries
+                  <span class="w-10 shrink-0 text-right text-xs font-semibold text-gray-600">
+                    {Math.round(w.weight * 100)}%
+                  </span>
+                  <span class="w-32 shrink-0 text-right text-xs text-gray-400">
+                    {w.attempts > 0 ? `${Math.round(w.accuracy)}% right` : 'untried'} · {w.attempts} tries
                   </span>
                 </div>
               {/each}
             </div>
+            <p class="mt-2 text-[11px] text-gray-400">
+              "% right" counts every attempt (first tries and reviews)
+              {srs.adaptiveWindow === 'all' ? 'across all time' : 'over the last 180 days'}, so it can
+              differ from the cold-accuracy table below. Ranking discounts small samples — a category
+              with a few bad tries sits below one that misses often over many.
+            </p>
           </div>
         {/if}
         {#if srs.deck}

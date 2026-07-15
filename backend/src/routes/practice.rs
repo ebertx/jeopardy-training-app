@@ -326,11 +326,12 @@ async fn fetch_review(
 }
 
 /// Per-category (attempts, correct) for the adaptive window: last 180 days,
-/// falling back to all-time when the window holds < 200 attempts.
+/// falling back to all-time when the window holds < 200 attempts. The second
+/// element names the window actually used ("180d" or "all") for display.
 async fn adaptive_category_stats(
     state: &Arc<AppState>,
     user_id: i32,
-) -> Result<Vec<CategoryStat>, AppError> {
+) -> Result<(Vec<CategoryStat>, &'static str), AppError> {
     const WINDOWED_SQL: &str = "SELECT jq.classifier_category, COUNT(*)::bigint, \
              SUM((qa.correct)::int)::bigint \
          FROM question_attempts qa \
@@ -351,19 +352,22 @@ async fn adaptive_category_stats(
         .await?;
     let windowed_total: i64 = windowed.iter().map(|r| r.1).sum();
 
-    let rows = if windowed_total < 200 {
-        sqlx::query_as(ALL_TIME_SQL)
+    let (rows, window) = if windowed_total < 200 {
+        let all_time: Vec<(String, i64, i64)> = sqlx::query_as(ALL_TIME_SQL)
             .bind(user_id)
             .fetch_all(&state.pool)
-            .await?
+            .await?;
+        (all_time, "all")
     } else {
-        windowed
+        (windowed, "180d")
     };
 
-    Ok(rows
-        .into_iter()
-        .map(|(category, attempts, correct)| CategoryStat { category, attempts, correct })
-        .collect())
+    Ok((
+        rows.into_iter()
+            .map(|(category, attempts, correct)| CategoryStat { category, attempts, correct })
+            .collect(),
+        window,
+    ))
 }
 
 async fn pick_with_filters(
@@ -449,7 +453,7 @@ async fn pick_new_clue(
         use rand::Rng;
         let roll: f64 = rand::rng().random();
         if roll >= 0.4 {
-            let stats = adaptive_category_stats(state, user_id).await?;
+            let (stats, _) = adaptive_category_stats(state, user_id).await?;
             let weights = compute_weights(&stats);
             let r: f64 = rand::rng().random();
             if let Some(cat) = sample_category(&weights, r) {
@@ -519,9 +523,9 @@ pub async fn status(
         .map(|(d, c)| json!({ "date": d, "count": c }))
         .collect();
 
-    let adaptive_weights: Vec<Value> = if adaptive {
-        let stats = adaptive_category_stats(&state, user_id).await?;
-        compute_weights(&stats)
+    let (adaptive_weights, adaptive_window): (Vec<Value>, Option<&'static str>) = if adaptive {
+        let (stats, window) = adaptive_category_stats(&state, user_id).await?;
+        let weights = compute_weights(&stats)
             .into_iter()
             .map(|w| {
                 json!({
@@ -531,9 +535,10 @@ pub async fn status(
                     "weight": w.weight,
                 })
             })
-            .collect()
+            .collect();
+        (weights, Some(window))
     } else {
-        vec![]
+        (vec![], None)
     };
 
     // Deck strip counts for the dashboard (same definitions as /api/cards).
@@ -556,6 +561,7 @@ pub async fn status(
         "reviewedToday": reviewed_today,
         "forecast": forecast_json,
         "adaptiveWeights": adaptive_weights,
+        "adaptiveWindow": adaptive_window,
         "deck": { "learning": deck.0, "mastered": deck.1, "struggling": deck.2 },
     })))
 }
