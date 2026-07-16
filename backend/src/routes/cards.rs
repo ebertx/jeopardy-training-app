@@ -36,15 +36,18 @@ pub async fn list(
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
 
+    // Buckets are mutually exclusive (struggling wins) and match the
+    // dashboard's deck composition; `due` is an orthogonal queue view.
     let state_filter = params.get("state").map(|s| s.as_str()).unwrap_or("learning");
     let predicate = match state_filter {
-        "learning" => "sc.state IN ('learning','relearning')",
+        "learning" => "NOT (sc.suspended OR sc.lapses >= 4) AND sc.state IN ('learning','relearning')",
         "due" => "sc.suspended = false AND sc.due <= now() + interval '24 hours'",
-        "mastered" => "sc.state = 'review' AND sc.interval_days >= 21",
+        "maturing" => "NOT (sc.suspended OR sc.lapses >= 4) AND sc.state = 'review' AND sc.interval_days < 21",
+        "mastered" => "NOT (sc.suspended OR sc.lapses >= 4) AND sc.state = 'review' AND sc.interval_days >= 21",
         "struggling" => "(sc.suspended = true OR sc.lapses >= 4)",
         _ => {
             return Err(AppError::BadRequest(
-                "state must be learning|due|mastered|struggling".into(),
+                "state must be learning|due|maturing|mastered|struggling".into(),
             ))
         }
     };

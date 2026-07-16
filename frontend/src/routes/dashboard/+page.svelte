@@ -42,8 +42,24 @@
     forecast: Array<{ date: string; count: number }>;
     adaptiveWeights?: Array<{ category: string; attempts: number; accuracy: number; weight: number }>;
     adaptiveWindow?: '180d' | 'all' | null;
-    deck?: { learning: number; mastered: number; struggling: number };
+    deck?: {
+      learning: number;
+      maturing: number;
+      mastered: number;
+      struggling: number;
+      total: number;
+      delta: { since: string; learning: number; maturing: number; mastered: number; struggling: number } | null;
+    };
   } | null>(null);
+
+  const DECK_BUCKETS = [
+    { key: 'learning', label: 'learning', color: '#f59e0b' },
+    { key: 'maturing', label: 'maturing', color: '#60a5fa' },
+    { key: 'mastered', label: 'mastered', color: '#22c55e' },
+    { key: 'struggling', label: 'struggling', color: '#ef4444' },
+  ] as const;
+
+  const fmtDelta = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
   let blindspots = $state<{
     packs: Array<{ id: number; theme: string; diagnosis: string }>;
@@ -302,17 +318,34 @@
             </p>
           </div>
         {/if}
-        {#if srs.deck}
-          <div class="mt-5 pt-4 border-t border-gray-100 flex flex-wrap gap-x-5 gap-y-1 text-sm">
-            <a href="/cards?state=learning" class="text-jeopardy-blue hover:underline">
-              <span class="font-bold">{srs.deck.learning}</span> learning
-            </a>
-            <a href="/cards?state=mastered" class="text-jeopardy-blue hover:underline">
-              <span class="font-bold">{srs.deck.mastered}</span> mastered
-            </a>
-            <a href="/cards?state=struggling" class="{srs.deck.struggling > 0 ? 'text-red-600' : 'text-jeopardy-blue'} hover:underline">
-              <span class="font-bold">{srs.deck.struggling}</span> struggling
-            </a>
+        {#if srs.deck && srs.deck.total > 0}
+          {@const deck = srs.deck}
+          <div class="mt-5 pt-4 border-t border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-600 mb-2">Deck · {deck.total.toLocaleString()} cards</h2>
+            <div class="flex h-3 rounded-full overflow-hidden bg-gray-100">
+              {#each DECK_BUCKETS as b (b.key)}
+                {#if deck[b.key] > 0}
+                  <div
+                    style="width: {(deck[b.key] / deck.total) * 100}%; background: {b.color}"
+                    title="{deck[b.key]} {b.label}"
+                  ></div>
+                {/if}
+              {/each}
+            </div>
+            <div class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+              {#each DECK_BUCKETS as b (b.key)}
+                <a href="/cards?state={b.key}" class="text-gray-700 hover:underline">
+                  <span class="inline-block w-2 h-2 rounded-full align-middle mr-1" style="background: {b.color}"></span>
+                  <span class="font-bold">{deck[b.key]}</span> {b.label}
+                </a>
+              {/each}
+            </div>
+            {#if deck.delta}
+              <p class="mt-1.5 text-xs text-gray-400">
+                Since {new Date(deck.delta.since + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}:
+                mastered {fmtDelta(deck.delta.mastered)} · struggling {fmtDelta(deck.delta.struggling)}
+              </p>
+            {/if}
           </div>
         {/if}
       </div>

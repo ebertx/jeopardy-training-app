@@ -6,7 +6,9 @@ export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
   server: {
     proxy: {
-      '/api': 'http://localhost:3000',
+      // VITE_API_PROXY lets a dev session point at a mock or remote backend
+      // (and dodge other projects squatting on localhost:3000).
+      '/api': process.env.VITE_API_PROXY ?? 'http://127.0.0.1:3000',
     },
   },
 });

@@ -12,10 +12,11 @@
     if (!auth.loading && !auth.user) goto('/login');
   });
 
-  type StateFilter = 'learning' | 'due' | 'mastered' | 'struggling';
+  type StateFilter = 'learning' | 'due' | 'maturing' | 'mastered' | 'struggling';
   const FILTERS: Array<{ key: StateFilter; label: string }> = [
     { key: 'learning', label: 'Learning' },
     { key: 'due', label: 'Due soon' },
+    { key: 'maturing', label: 'Maturing' },
     { key: 'mastered', label: 'Mastered' },
     { key: 'struggling', label: 'Struggling' },
   ];
@@ -38,7 +39,9 @@
 
   const initial = page.url.searchParams.get('state');
   let stateFilter = $state<StateFilter>(
-    initial === 'due' || initial === 'mastered' || initial === 'struggling' ? initial : 'learning'
+    initial === 'due' || initial === 'maturing' || initial === 'mastered' || initial === 'struggling'
+      ? initial
+      : 'learning'
   );
   let selectedCategory = $state('all');
   let categories = $state<Array<{ name: string; count: number }>>([]);

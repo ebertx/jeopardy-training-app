@@ -541,12 +541,15 @@ pub async fn status(
         (vec![], None)
     };
 
-    // Deck strip counts for the dashboard (same definitions as /api/cards).
-    let deck: (i64, i64, i64) = sqlx::query_as(
+    // Deck composition for the dashboard: four mutually exclusive buckets
+    // (struggling wins so it stays actionable) that sum to the active deck.
+    // Same definitions as /api/cards.
+    let deck: (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT \
-           COUNT(*) FILTER (WHERE sc.state IN ('learning','relearning')), \
-           COUNT(*) FILTER (WHERE sc.state = 'review' AND sc.interval_days >= 21), \
-           COUNT(*) FILTER (WHERE sc.suspended = true OR sc.lapses >= 4) \
+           COUNT(*) FILTER (WHERE NOT (sc.suspended OR sc.lapses >= 4) AND sc.state IN ('learning','relearning')), \
+           COUNT(*) FILTER (WHERE NOT (sc.suspended OR sc.lapses >= 4) AND sc.state = 'review' AND sc.interval_days < 21), \
+           COUNT(*) FILTER (WHERE NOT (sc.suspended OR sc.lapses >= 4) AND sc.state = 'review' AND sc.interval_days >= 21), \
+           COUNT(*) FILTER (WHERE sc.suspended OR sc.lapses >= 4) \
          FROM srs_cards sc \
          JOIN jeopardy_questions jq ON jq.id = sc.question_id \
          WHERE sc.user_id = $1 AND jq.archived = false",
@@ -554,6 +557,63 @@ pub async fn status(
     .bind(user_id)
     .fetch_one(&state.pool)
     .await?;
+    let (learning, maturing, mastered, struggling) = deck;
+
+    // Upsert today's snapshot (user-local date), then diff against a baseline:
+    // newest snapshot at least a week old, else the oldest one before today.
+    let zone: chrono_tz::Tz = tz
+        .as_deref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+    let today = Utc::now().with_timezone(&zone).date_naive();
+    sqlx::query(
+        "INSERT INTO srs_deck_snapshots (user_id, snap_date, learning, maturing, mastered, struggling) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT (user_id, snap_date) DO UPDATE SET \
+           learning = EXCLUDED.learning, maturing = EXCLUDED.maturing, \
+           mastered = EXCLUDED.mastered, struggling = EXCLUDED.struggling",
+    )
+    .bind(user_id)
+    .bind(today)
+    .bind(learning as i32)
+    .bind(maturing as i32)
+    .bind(mastered as i32)
+    .bind(struggling as i32)
+    .execute(&state.pool)
+    .await?;
+
+    let baseline: Option<(chrono::NaiveDate, i32, i32, i32, i32)> = sqlx::query_as(
+        "SELECT snap_date, learning, maturing, mastered, struggling FROM srs_deck_snapshots \
+         WHERE user_id = $1 AND snap_date <= $2::date - 7 \
+         ORDER BY snap_date DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(today)
+    .fetch_optional(&state.pool)
+    .await?;
+    let baseline = match baseline {
+        Some(b) => Some(b),
+        None => {
+            sqlx::query_as(
+                "SELECT snap_date, learning, maturing, mastered, struggling FROM srs_deck_snapshots \
+                 WHERE user_id = $1 AND snap_date < $2 \
+                 ORDER BY snap_date ASC LIMIT 1",
+            )
+            .bind(user_id)
+            .bind(today)
+            .fetch_optional(&state.pool)
+            .await?
+        }
+    };
+    let delta = baseline.map(|(since, l, y, m, s)| {
+        json!({
+            "since": since,
+            "learning": learning - l as i64,
+            "maturing": maturing - y as i64,
+            "mastered": mastered - m as i64,
+            "struggling": struggling - s as i64,
+        })
+    });
 
     Ok(Json(json!({
         "dueCount": due_count,
@@ -562,7 +622,14 @@ pub async fn status(
         "forecast": forecast_json,
         "adaptiveWeights": adaptive_weights,
         "adaptiveWindow": adaptive_window,
-        "deck": { "learning": deck.0, "mastered": deck.1, "struggling": deck.2 },
+        "deck": {
+            "learning": learning,
+            "maturing": maturing,
+            "mastered": mastered,
+            "struggling": struggling,
+            "total": learning + maturing + mastered + struggling,
+            "delta": delta,
+        },
     })))
 }
 
