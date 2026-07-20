@@ -7,6 +7,7 @@ mod error;
 mod models;
 mod srs;
 mod adaptive;
+mod blend;
 mod insights;
 mod openai;
 mod routes;
