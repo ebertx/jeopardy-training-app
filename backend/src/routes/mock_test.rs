@@ -42,6 +42,43 @@ pub fn apportion(dist: &[(String, i64)], seats: i64) -> Vec<(String, i64)> {
 const MIDBAND: &str = "((jq.round = 1 AND jq.clue_value BETWEEN 600 AND 1000) \
                        OR (jq.round = 2 AND jq.clue_value BETWEEN 800 AND 1200))";
 
+// Weighted sampling via the exponential race: the row minimizing -ln(u)/w is a
+// draw with probability proportional to w. answer_freq >= 1 keeps the divisor
+// positive; air_date is NOT NULL corpus-wide.
+const CANON_ORDER: &str = "-ln(random()) / ln(1 + jq.answer_freq)";
+const RECENCY_ORDER: &str =
+    "-ln(random()) * exp(0.11552 * EXTRACT(EPOCH FROM (now() - jq.air_date)) / 31557600.0)";
+
+async fn draw_category(
+    state: &Arc<AppState>,
+    user_id: i32,
+    category: &str,
+    seats: i64,
+    order_expr: &str,
+    exclude: &[i32],
+) -> Result<Vec<i32>, AppError> {
+    if seats <= 0 {
+        return Ok(vec![]);
+    }
+    let sql = format!(
+        "SELECT jq.id FROM jeopardy_questions jq
+         WHERE jq.archived = false AND jq.question IS NOT NULL AND jq.answer IS NOT NULL
+           AND jq.classifier_category = $2 AND {MIDBAND}
+           AND jq.id <> ALL($4)
+           AND NOT EXISTS (SELECT 1 FROM question_attempts qa WHERE qa.user_id = $1 AND qa.question_id = jq.id)
+           AND NOT EXISTS (SELECT 1 FROM srs_cards sc WHERE sc.user_id = $1 AND sc.question_id = jq.id)
+         ORDER BY {order_expr} LIMIT $3"
+    );
+    let picked: Vec<(i32,)> = sqlx::query_as(&sql)
+        .bind(user_id)
+        .bind(category)
+        .bind(seats)
+        .bind(exclude.to_vec())
+        .fetch_all(&state.pool)
+        .await?;
+    Ok(picked.into_iter().map(|(i,)| i).collect())
+}
+
 async fn active_test(
     state: &Arc<AppState>,
     user_id: i32,
@@ -82,22 +119,31 @@ pub async fn create(
         return Err(AppError::BadRequest("Not enough unseen clues for a mock test".into()));
     }
 
-    let quotas = apportion(&dist, TEST_SIZE);
+    let available: Vec<String> = dist.iter().map(|(c, _)| c.clone()).collect();
+    let weights = crate::blend::target_weights(&available);
+    let quotas = apportion(&weights, TEST_SIZE);
     let mut ids: Vec<i32> = Vec::with_capacity(TEST_SIZE as usize);
     for (cat, seats) in &quotas {
-        if *seats == 0 { continue; }
-        let sel_sql = format!(
-            "SELECT jq.id FROM jeopardy_questions jq
-             WHERE jq.archived = false AND jq.question IS NOT NULL AND jq.answer IS NOT NULL
-               AND jq.classifier_category = $2 AND {MIDBAND}
-               AND NOT EXISTS (SELECT 1 FROM question_attempts qa WHERE qa.user_id = $1 AND qa.question_id = jq.id)
-               AND NOT EXISTS (SELECT 1 FROM srs_cards sc WHERE sc.user_id = $1 AND sc.question_id = jq.id)
-             ORDER BY random() LIMIT $3"
-        );
-        let picked: Vec<(i32,)> = sqlx::query_as(&sel_sql)
-            .bind(user_id).bind(cat).bind(seats)
-            .fetch_all(&state.pool).await?;
-        ids.extend(picked.into_iter().map(|(i,)| i));
+        if *seats == 0 {
+            continue;
+        }
+        match crate::blend::sampling_kind(cat) {
+            crate::blend::SamplingKind::Canon => {
+                let picked = draw_category(&state, user_id, cat, *seats, CANON_ORDER, &ids).await?;
+                ids.extend(picked);
+            }
+            crate::blend::SamplingKind::Recency => {
+                let picked = draw_category(&state, user_id, cat, *seats, RECENCY_ORDER, &ids).await?;
+                ids.extend(picked);
+            }
+            crate::blend::SamplingKind::Split => {
+                let (canon_seats, recency_seats) = crate::blend::split_seats(*seats);
+                let picked = draw_category(&state, user_id, cat, canon_seats, CANON_ORDER, &ids).await?;
+                ids.extend(picked);
+                let picked = draw_category(&state, user_id, cat, recency_seats, RECENCY_ORDER, &ids).await?;
+                ids.extend(picked);
+            }
+        }
     }
     // Shortfall (a category quota exceeded its pool): top up from any category.
     if (ids.len() as i64) < TEST_SIZE {
