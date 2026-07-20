@@ -370,15 +370,18 @@ WITH pool AS (
       OR (jq.round = 2 AND jq.clue_value BETWEEN 800 AND 1200))
   ORDER BY -ln(random()) * exp(0.11552 * EXTRACT(EPOCH FROM (now() - jq.air_date)) / 31557600.0) LIMIT 200
 )
-SELECT 'recency: pool median air_date' AS metric, percentile_cont(0.5) WITHIN GROUP (ORDER BY air_date)::text AS value FROM pool
+SELECT 'recency: pool median air_date' AS metric,
+       to_timestamp(percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM air_date)))::date::text AS value FROM pool
 UNION ALL
-SELECT 'recency: draw median air_date', percentile_cont(0.5) WITHIN GROUP (ORDER BY air_date)::text FROM draw;
+SELECT 'recency: draw median air_date',
+       to_timestamp(percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM air_date)))::date::text FROM draw;
+-- (percentile_cont does not accept date in Postgres 15; go through epoch.)
 ```
 
 - [ ] **Step 2: Run it**
 
 Run: `tower-ssh "docker exec -i postgresql15 psql -U ebertx -d jeopardy" < scripts/verify-mock-blend.sql`
-Expected: canon draw avg freq at least 3× the pool avg; recency draw median air_date 2018 or later while the pool median is ~2005–2010. If either fails, stop — the ORDER BY expression in Task 3 is wrong (recheck sign and constant).
+Expected: canon draw avg freq clearly above the pool avg (the clue-level pool is already canon-rich — pool avg ~26 — so expect roughly 1.5–2×, not a large multiple; the sharper signal is the tier shift, e.g. one-off answers ~12% of pool vs ~4% of draw); recency draw median air_date 2018 or later while the pool median is ~2005–2012. If the draw does not beat the pool on these, stop — the ORDER BY expression in Task 3 is wrong (recheck sign and constant).
 
 - [ ] **Step 3: Commit**
 
