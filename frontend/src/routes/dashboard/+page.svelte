@@ -137,7 +137,9 @@
   };
 
   // Due forecast (7 days on phones, 14 otherwise), padded so quiet days
-  // render as true zeros.
+  // render as true zeros. The axis is built from local calendar days to match
+  // the backend's user-timezone bucketing (UTC arithmetic here made "Today"
+  // drift onto tomorrow's bucket every evening).
   let forecastDays = $derived(isMobile ? 7 : 14);
   let forecastChartData = $derived.by(() => {
     if (!srs || !srs.forecast) return null;
@@ -146,9 +148,9 @@
     const labels: string[] = [];
     const data: number[] = [];
     for (let i = 0; i < forecastDays; i++) {
-      const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + i));
-      const key = d.toISOString().slice(0, 10);
-      labels.push(i === 0 ? 'Today' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', timeZone: 'UTC' }));
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      labels.push(i === 0 ? 'Today' : d.toLocaleDateString([], { weekday: 'short', day: 'numeric' }));
       data.push(counts.get(key) ?? 0);
     }
     return {

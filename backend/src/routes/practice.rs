@@ -506,16 +506,26 @@ pub async fn status(
     .fetch_one(&state.pool)
     .await?;
 
-    // 14-day due forecast (calendar day in UTC; good enough for a bar chart).
-    // Overdue cards fold into today's bucket so the chart never shows past dates.
+    // The user's IANA zone (validated through chrono-tz, UTC fallback) is used
+    // for forecast day-bucketing and deck snapshots below.
+    let zone: chrono_tz::Tz = tz
+        .as_deref()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+
+    // 14-day due forecast bucketed by the user's local calendar day — a card
+    // due at 8pm belongs to that evening's bar, not (as UTC bucketing had it)
+    // the next day's. The date-based cutoff keeps the last day complete, and
+    // overdue cards fold into today so the chart never shows past dates.
     let forecast: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
-        "SELECT GREATEST((due AT TIME ZONE 'UTC')::date, (now() AT TIME ZONE 'UTC')::date) AS d, COUNT(*)
+        "SELECT GREATEST((due AT TIME ZONE $2)::date, (now() AT TIME ZONE $2)::date) AS d, COUNT(*)
          FROM srs_cards
          WHERE user_id = $1 AND suspended = false
-           AND due < now() + interval '14 days'
+           AND (due AT TIME ZONE $2)::date <= (now() AT TIME ZONE $2)::date + 13
          GROUP BY d ORDER BY d",
     )
     .bind(user_id)
+    .bind(zone.name())
     .fetch_all(&state.pool)
     .await?;
     let forecast_json: Vec<Value> = forecast
@@ -561,10 +571,6 @@ pub async fn status(
 
     // Upsert today's snapshot (user-local date), then diff against a baseline:
     // newest snapshot at least a week old, else the oldest one before today.
-    let zone: chrono_tz::Tz = tz
-        .as_deref()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(chrono_tz::UTC);
     let today = Utc::now().with_timezone(&zone).date_naive();
     sqlx::query(
         "INSERT INTO srs_deck_snapshots (user_id, snap_date, learning, maturing, mastered, struggling) \
