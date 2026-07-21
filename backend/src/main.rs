@@ -8,6 +8,7 @@ mod models;
 mod srs;
 mod adaptive;
 mod blend;
+mod pavlov;
 mod insights;
 mod openai;
 mod routes;
