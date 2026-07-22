@@ -366,6 +366,52 @@ pub async fn run_generation(state: &Arc<AppState>) -> Result<(), AppError> {
     render_stage(state).await
 }
 
+// Hint thresholds for top-up phase (independent from candidate mining thresholds).
+pub const HINT_BIGRAM_MIN_SUPPORT: i64 = 3;
+pub const HINT_BIGRAM_MIN_PREC: f64 = 0.4;
+pub const HINT_UNIGRAM_MIN_SUPPORT: i64 = 5;
+pub const HINT_UNIGRAM_MIN_PREC: f64 = 0.5;
+
+/// Prune hint candidates: any hint token-related (subset either direction) to
+/// a standard cue of the same answer is dropped — standard cues are immovable
+/// — then survivors are pruned among themselves.
+pub fn prune_hints(standard: &[CueCandidate], hints: Vec<CueCandidate>) -> Vec<CueCandidate> {
+    use std::collections::HashSet;
+    let std_toks: Vec<(&str, HashSet<&str>)> = standard
+        .iter()
+        .map(|c| (c.answer_norm.as_str(), c.gram.split(' ').collect()))
+        .collect();
+    let survivors: Vec<CueCandidate> = hints
+        .into_iter()
+        .filter(|h| {
+            let ht: HashSet<&str> = h.gram.split(' ').collect();
+            !std_toks.iter().any(|(ans, st)| {
+                *ans == h.answer_norm && (ht.is_subset(st) || st.is_subset(&ht))
+            })
+        })
+        .collect();
+    prune_redundant(survivors)
+}
+
+#[derive(Debug, Clone)]
+pub struct PhraseRow {
+    pub display: String,
+    pub tier: String,
+    pub score: f64,
+}
+
+/// Standard phrases before hints, score desc within tier, capped at 3.
+pub fn assemble_phrases(mut rows: Vec<PhraseRow>) -> Vec<PhraseRow> {
+    rows.sort_by(|a, b| {
+        let ta = (a.tier != "standard") as u8;
+        let tb = (b.tier != "standard") as u8;
+        ta.cmp(&tb)
+            .then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    rows.truncate(3);
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +526,60 @@ mod tests {
     fn parse_render_of_garbage_is_empty() {
         assert!(parse_render_response(&serde_json::json!({"nope": 1})).is_empty());
         assert!(parse_render_response(&serde_json::json!("string")).is_empty());
+    }
+
+    #[test]
+    fn prune_hints_drops_hint_related_to_standard_but_never_standard() {
+        let standard = vec![cand("dylan thomas", "milk wood", 2, 6, 7)];
+        let hints = vec![
+            cand("dylan thomas", "wood", 1, 7, 12),      // subset of standard -> dropped
+            cand("dylan thomas", "swansea", 1, 5, 9),    // unrelated -> kept
+        ];
+        let out = prune_hints(&standard, hints);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].gram, "swansea");
+    }
+
+    #[test]
+    fn prune_hints_prunes_hints_among_themselves() {
+        let out = prune_hints(
+            &[],
+            vec![
+                cand("solomon", "temple", 1, 5, 10),          // score 2.5
+                cand("solomon", "first temple", 2, 4, 5),     // score 3.2, superset
+            ],
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].gram, "first temple");
+    }
+
+    #[test]
+    fn prune_hints_ignores_standard_of_other_answers() {
+        let standard = vec![cand("robert frost", "poet laureate", 2, 5, 6)];
+        let hints = vec![cand("dylan thomas", "poet", 1, 5, 9)];
+        let out = prune_hints(&standard, hints);
+        assert_eq!(out.len(), 1);
+    }
+
+    fn prow(display: &str, tier: &str, score: f64) -> PhraseRow {
+        PhraseRow { display: display.to_string(), tier: tier.to_string(), score }
+    }
+
+    #[test]
+    fn assemble_orders_standard_first_then_score_and_caps_at_three() {
+        let out = assemble_phrases(vec![
+            prow("hint high", "hint", 9.0),
+            prow("std low", "standard", 1.0),
+            prow("std high", "standard", 5.0),
+            prow("hint low", "hint", 0.5),
+        ]);
+        let got: Vec<&str> = out.iter().map(|p| p.display.as_str()).collect();
+        assert_eq!(got, vec!["std high", "std low", "hint high"]);
+    }
+
+    #[test]
+    fn assemble_handles_fewer_than_three() {
+        let out = assemble_phrases(vec![prow("only", "standard", 2.0)]);
+        assert_eq!(out.len(), 1);
     }
 }
