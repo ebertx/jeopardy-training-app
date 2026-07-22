@@ -287,6 +287,154 @@ async fn mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
     Ok(())
 }
 
+#[derive(sqlx::FromRow)]
+struct StandardCueRow {
+    answer_norm: String,
+    gram: String,
+    n: i16,
+    support: i32,
+    total: i32,
+    prec: f32,
+}
+
+/// Stage A2: hint-tier top-up. Only answers with < 3 standard cues; keeps at
+/// most (3 - standard_count) best hint candidates per answer after leak
+/// filtering and pruning against the answer's standard cues.
+async fn hint_mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
+    // Deficit per answer over non-dropped standard cues (pending count too:
+    // renders may still be in flight on a resumed run).
+    let deficits: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT answer_norm, 3 - count(*) AS deficit
+         FROM pavlov_cues WHERE tier = 'standard' AND status <> 'dropped'
+         GROUP BY 1 HAVING count(*) < 3",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    if deficits.is_empty() {
+        return Ok(());
+    }
+    let deficit_map: std::collections::HashMap<String, i64> = deficits.into_iter().collect();
+    let norms: Vec<String> = deficit_map.keys().cloned().collect();
+
+    // Hint-band candidates for exactly those answers (between hint and
+    // standard thresholds; standard-qualifying grams are already in the table
+    // and excluded by the NOT EXISTS).
+    let sql = "WITH sup AS (
+           SELECT g.answer_norm, g.gram, g.n, count(DISTINCT g.clue_id) AS support
+           FROM pavlov_clue_ngrams g
+           WHERE g.answer_norm = ANY($1)
+           GROUP BY 1, 2, 3
+           HAVING count(DISTINCT g.clue_id) >= $2
+         ), tot AS (
+           SELECT g.gram, count(DISTINCT g.clue_id) AS total
+           FROM pavlov_clue_ngrams g
+           WHERE g.gram IN (SELECT DISTINCT gram FROM sup)
+           GROUP BY 1
+         )
+         SELECT s.answer_norm, s.gram, s.n, s.support::int4 AS support,
+                t.total::int4 AS total, (s.support::float8 / t.total)::float4 AS prec
+         FROM sup s JOIN tot t USING (gram)
+         WHERE ((s.n = 2 AND s.support >= $3 AND s.support::float8 / t.total >= $4)
+             OR (s.n = 1 AND s.support >= $5 AND s.support::float8 / t.total >= $6))
+           AND NOT EXISTS (SELECT 1 FROM pavlov_cues pc
+                           WHERE pc.answer_norm = s.answer_norm AND pc.cue_stem = s.gram)";
+    let rows: Vec<StandardCueRow> = sqlx::query_as(sql)
+        .bind(&norms)
+        .bind(HINT_BIGRAM_MIN_SUPPORT.min(HINT_UNIGRAM_MIN_SUPPORT))
+        .bind(HINT_BIGRAM_MIN_SUPPORT)
+        .bind(HINT_BIGRAM_MIN_PREC)
+        .bind(HINT_UNIGRAM_MIN_SUPPORT)
+        .bind(HINT_UNIGRAM_MIN_PREC)
+        .fetch_all(&state.pool)
+        .await?;
+
+    // Existing standard cues of those answers, for pruning.
+    let standard_rows: Vec<StandardCueRow> = sqlx::query_as(
+        "SELECT answer_norm, cue_stem AS gram, 0::int2 AS n, support, total, prec
+         FROM pavlov_cues
+         WHERE tier = 'standard' AND status <> 'dropped' AND answer_norm = ANY($1)",
+    )
+    .bind(&norms)
+    .fetch_all(&state.pool)
+    .await?;
+    let to_cand = |r: StandardCueRow| CueCandidate {
+        answer_norm: r.answer_norm,
+        gram: r.gram,
+        n: r.n,
+        support: r.support as i64,
+        total: r.total as i64,
+        prec: r.prec as f64,
+    };
+    let standard: Vec<CueCandidate> = standard_rows.into_iter().map(to_cand).collect();
+    let hints: Vec<CueCandidate> = rows
+        .into_iter()
+        .map(to_cand)
+        .filter(|c| !phrase_leaks_answer(&c.answer_norm, &c.gram))
+        .collect();
+    let mut kept = prune_hints(&standard, hints);
+
+    // Per-answer cap at the deficit, best score first.
+    kept.sort_by(|a, b| {
+        a.answer_norm.cmp(&b.answer_norm).then(
+            (b.support as f64 * b.prec)
+                .partial_cmp(&(a.support as f64 * a.prec))
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    let mut taken: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut inserted = 0usize;
+    for c in kept {
+        let cap = *deficit_map.get(&c.answer_norm).unwrap_or(&0);
+        let t = taken.entry(c.answer_norm.clone()).or_insert(0);
+        if *t >= cap {
+            continue;
+        }
+        *t += 1;
+        let examples: Vec<(i32,)> = sqlx::query_as(
+            "SELECT g.clue_id FROM pavlov_clue_ngrams g
+             JOIN jeopardy_questions jq ON jq.id = g.clue_id
+             WHERE g.answer_norm = $1 AND g.gram = $2
+             GROUP BY g.clue_id, jq.air_date
+             ORDER BY jq.air_date DESC NULLS LAST LIMIT 3",
+        )
+        .bind(&c.answer_norm)
+        .bind(&c.gram)
+        .fetch_all(&state.pool)
+        .await?;
+        let example_ids: Vec<i32> = examples.into_iter().map(|(i,)| i).collect();
+        let (display, category): (String, Option<String>) = {
+            let sql = format!(
+                "SELECT mode() WITHIN GROUP (ORDER BY jq.question),
+                        mode() WITHIN GROUP (ORDER BY jq.classifier_category)
+                 FROM jeopardy_questions jq
+                 WHERE jq.archived = false AND jq.question IS NOT NULL
+                   AND {NORM_EXPR} = $1"
+            );
+            sqlx::query_as(&sql).bind(&c.answer_norm).fetch_one(&state.pool).await?
+        };
+        sqlx::query(
+            "INSERT INTO pavlov_cues
+               (answer, answer_norm, meta_category, cue_stem, support, total, prec,
+                example_clue_ids, tier)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'hint')
+             ON CONFLICT (answer_norm, cue_stem) DO NOTHING",
+        )
+        .bind(&display)
+        .bind(&c.answer_norm)
+        .bind(category.unwrap_or_else(|| "Miscellaneous".to_string()))
+        .bind(&c.gram)
+        .bind(c.support as i32)
+        .bind(c.total as i32)
+        .bind(c.prec as f32)
+        .bind(&example_ids)
+        .execute(&state.pool)
+        .await?;
+        inserted += 1;
+    }
+    tracing::info!("pavlov hint mine: {} hint cues inserted", inserted);
+    Ok(())
+}
+
 /// Stage B: render surface forms for pending cues in batches; upserts per
 /// batch so an interrupted run resumes where it left off.
 async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
@@ -360,10 +508,97 @@ async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
     }
 }
 
-/// Full v2 generation: mine then render. Both stages idempotent/resumable.
+/// Stage C: rebuild the denormalized card table from active cues. Derived
+/// data — full rebuild is idempotent. Cards require >= 1 active standard cue.
+async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
+    let answers: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT answer_norm FROM pavlov_cues
+         WHERE status = 'active' AND tier = 'standard'",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    for (norm,) in &answers {
+        let cue_rows: Vec<(String, String, i32, f32, Vec<i32>, String, String)> = sqlx::query_as(
+            "SELECT cue_display, tier, support, prec, example_clue_ids, answer, meta_category
+             FROM pavlov_cues WHERE status = 'active' AND answer_norm = $1",
+        )
+        .bind(norm)
+        .fetch_all(&state.pool)
+        .await?;
+        let (answer_display, category) = match cue_rows.first() {
+            Some(r) => (r.5.clone(), r.6.clone()),
+            None => continue,
+        };
+        let score = cue_rows
+            .iter()
+            .filter(|r| r.1 == "standard")
+            .map(|r| r.2 as f64 * r.3 as f64)
+            .fold(0.0f64, f64::max);
+        let chosen = assemble_phrases(
+            cue_rows
+                .iter()
+                .map(|r| PhraseRow {
+                    display: r.0.clone(),
+                    tier: r.1.clone(),
+                    score: r.2 as f64 * r.3 as f64,
+                })
+                .collect(),
+        );
+        let phrases: Vec<String> = chosen.iter().map(|p| p.display.clone()).collect();
+        let tiers: Vec<String> = chosen.iter().map(|p| p.tier.clone()).collect();
+        // Examples: union over the chosen phrases' source cues, newest first.
+        let chosen_set: std::collections::HashSet<&str> =
+            phrases.iter().map(|s| s.as_str()).collect();
+        let mut example_ids: Vec<i32> = cue_rows
+            .iter()
+            .filter(|r| chosen_set.contains(r.0.as_str()))
+            .flat_map(|r| r.4.iter().copied())
+            .collect();
+        example_ids.dedup();
+        let example_ids: Vec<i32> = {
+            let ordered: Vec<(i32,)> = sqlx::query_as(
+                "SELECT id FROM jeopardy_questions WHERE id = ANY($1)
+                 ORDER BY air_date DESC NULLS LAST LIMIT 3",
+            )
+            .bind(&example_ids)
+            .fetch_all(&state.pool)
+            .await?;
+            ordered.into_iter().map(|(i,)| i).collect()
+        };
+        sqlx::query(
+            "INSERT INTO pavlov_answers
+               (answer_norm, answer, meta_category, phrases, phrase_tiers, score, example_clue_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (answer_norm) DO UPDATE SET
+               answer = EXCLUDED.answer,
+               meta_category = EXCLUDED.meta_category,
+               phrases = EXCLUDED.phrases,
+               phrase_tiers = EXCLUDED.phrase_tiers,
+               score = EXCLUDED.score,
+               example_clue_ids = EXCLUDED.example_clue_ids",
+        )
+        .bind(norm)
+        .bind(&answer_display)
+        .bind(&category)
+        .bind(&phrases)
+        .bind(&tiers)
+        .bind(score as f32)
+        .bind(&example_ids)
+        .execute(&state.pool)
+        .await?;
+    }
+    tracing::info!("pavlov assemble: {} answer cards", answers.len());
+    Ok(())
+}
+
+/// Full v2.1 generation: mine standard, top up hints, render new pending
+/// cues, then rebuild the answer-card table. All stages idempotent/resumable.
 pub async fn run_generation(state: &Arc<AppState>) -> Result<(), AppError> {
     mine_stage(state).await?;
-    render_stage(state).await
+    hint_mine_stage(state).await?;
+    render_stage(state).await?;
+    assemble_stage(state).await
 }
 
 // Hint thresholds for top-up phase (independent from candidate mining thresholds).
