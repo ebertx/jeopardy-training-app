@@ -108,3 +108,17 @@ SELECT 'canary_dylan_thomas_card' AS check,
          SELECT 1 FROM pavlov_answers
          WHERE answer_norm = 'dylan thomas' AND 'Welsh poet' = ANY(phrases)
        ) THEN 0 ELSE 1 END AS fail_rows;
+
+-- L. expect 0: same-answer active cue pairs whose punctuation-normalized
+--    token sets are subset-related (spelling-variant near-duplicates).
+WITH toks AS (
+  SELECT id, answer_norm,
+         (SELECT array_agg(DISTINCT w ORDER BY w)
+          FROM regexp_split_to_table(lower(regexp_replace(cue_display,'[^a-zA-Z0-9]+',' ','g')),' ') AS w
+          WHERE w <> '') AS tokset
+  FROM pavlov_cues WHERE status='active'
+)
+SELECT 'normalized_dup_pair' AS check, count(*) AS fail_rows
+FROM toks a JOIN toks b
+  ON a.answer_norm = b.answer_norm AND a.id < b.id
+  AND (a.tokset <@ b.tokset OR b.tokset <@ a.tokset);

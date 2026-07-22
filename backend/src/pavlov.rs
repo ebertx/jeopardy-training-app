@@ -32,6 +32,18 @@ pub fn phrase_leaks_answer(answer: &str, phrase: &str) -> bool {
     whole || word
 }
 
+/// Normalized token set for a phrase: lowercased, split on any non-alphanumeric
+/// character (so "sun-tzu" and "sun tzu" both yield {"sun", "tzu"}), empties
+/// filtered. Used to relate spelling variants (hyphen/space/apostrophe) during
+/// redundancy pruning.
+fn norm_tokens(s: &str) -> std::collections::HashSet<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CueCandidate {
     pub answer_norm: String,
@@ -48,10 +60,7 @@ pub struct CueCandidate {
 /// Grams of different answers never prune each other.
 pub fn prune_redundant(cands: Vec<CueCandidate>) -> Vec<CueCandidate> {
     use std::collections::HashSet;
-    let toks: Vec<HashSet<&str>> = cands
-        .iter()
-        .map(|c| c.gram.split(' ').collect())
-        .collect();
+    let toks: Vec<HashSet<String>> = cands.iter().map(|c| norm_tokens(&c.gram)).collect();
     let score = |c: &CueCandidate| c.support as f64 * c.prec;
     let mut dropped = vec![false; cands.len()];
     for i in 0..cands.len() {
@@ -143,12 +152,16 @@ pub fn parse_render_response(v: &serde_json::Value) -> Vec<RenderOutcome> {
             if answer.is_empty() || gram.is_empty() {
                 return None;
             }
-            let display = item
+            let mut display = item
                 .get("display")
                 .and_then(|d| d.as_str())
                 .unwrap_or("")
                 .trim()
+                .trim_matches(['"', '\'', '\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}'])
                 .to_string();
+            if display.matches('"').count() % 2 == 1 {
+                display = display.replace('"', "");
+            }
             let keep = item.get("keep").and_then(|k| k.as_bool()).unwrap_or(true)
                 && !display.is_empty()
                 && !phrase_leaks_answer(&answer, &display);
@@ -632,15 +645,14 @@ pub const HINT_UNIGRAM_MIN_PREC: f64 = 0.5;
 /// a standard cue of the same answer is dropped — standard cues are immovable
 /// — then survivors are pruned among themselves.
 pub fn prune_hints(standard: &[CueCandidate], hints: Vec<CueCandidate>) -> Vec<CueCandidate> {
-    use std::collections::HashSet;
-    let std_toks: Vec<(&str, HashSet<&str>)> = standard
+    let std_toks: Vec<(&str, std::collections::HashSet<String>)> = standard
         .iter()
-        .map(|c| (c.answer_norm.as_str(), c.gram.split(' ').collect()))
+        .map(|c| (c.answer_norm.as_str(), norm_tokens(&c.gram)))
         .collect();
     let survivors: Vec<CueCandidate> = hints
         .into_iter()
         .filter(|h| {
-            let ht: HashSet<&str> = h.gram.split(' ').collect();
+            let ht = norm_tokens(&h.gram);
             !std_toks.iter().any(|(ans, st)| {
                 *ans == h.answer_norm && (ht.is_subset(st) || st.is_subset(&ht))
             })
@@ -731,6 +743,16 @@ mod tests {
     }
 
     #[test]
+    fn prune_treats_hyphen_variants_as_related() {
+        let out = prune_redundant(vec![
+            cand("art of war", "sun tzu", 2, 6, 8),     // score 4.5
+            cand("art of war", "sun-tzu", 1, 5, 9),     // score 2.78, same normalized tokens
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].gram, "sun tzu");
+    }
+
+    #[test]
     fn prune_keeps_unrelated_grams_and_other_answers() {
         let out = prune_redundant(vec![
             cand("dylan thomas", "welsh poet", 2, 19, 25),
@@ -779,6 +801,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_render_strips_orphan_quotes() {
+        let v = serde_json::json!({
+            "results": [
+                { "answer": "Jonathan Edwards", "gram": "angri god",
+                  "keep": true, "display": "sermon \"Sinners" }
+            ]
+        });
+        let out = parse_render_response(&v);
+        assert_eq!(out[0].display, "sermon Sinners");
+        assert!(out[0].keep);
+    }
+
+    #[test]
     fn parse_render_of_garbage_is_empty() {
         assert!(parse_render_response(&serde_json::json!({"nope": 1})).is_empty());
         assert!(parse_render_response(&serde_json::json!("string")).is_empty());
@@ -815,6 +850,13 @@ mod tests {
         let hints = vec![cand("dylan thomas", "poet", 1, 5, 9)];
         let out = prune_hints(&standard, hints);
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn prune_hints_catches_hyphen_variant_of_standard() {
+        let standard = vec![cand("joy luck club", "jing-mei woo", 2, 5, 6)];
+        let hints = vec![cand("joy luck club", "jing mei", 2, 4, 7)];
+        assert!(prune_hints(&standard, hints).is_empty());
     }
 
     fn prow(display: &str, tier: &str, score: f64) -> PhraseRow {
