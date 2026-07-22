@@ -9,6 +9,7 @@
     { href: '/dashboard', label: 'Dashboard' },
     { href: '/practice', label: 'Practice' },
     { href: '/drill', label: 'Drill' },
+    { href: '/pavlov', label: 'Pavlov' },
     { href: '/mock', label: 'Mock Test' },
     { href: '/primers', label: 'Primers' },
     { href: '/coryat', label: 'Coryat' },
