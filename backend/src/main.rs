@@ -25,6 +25,7 @@ pub struct AppState {
     pub config: config::Config,
     pub insight_inflight: tokio::sync::Mutex<std::collections::HashSet<i32>>,
     pub blindspot_inflight: std::sync::atomic::AtomicBool,
+    pub pavlov_inflight: std::sync::atomic::AtomicBool,
 }
 
 fn main() {
@@ -62,6 +63,7 @@ async fn run() {
         config,
         insight_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         blindspot_inflight: std::sync::atomic::AtomicBool::new(false),
+        pavlov_inflight: std::sync::atomic::AtomicBool::new(false),
     });
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
@@ -109,6 +111,8 @@ async fn run() {
         .route("/api/primers/{slug}", get(routes::primers::get_primer))
         .route("/api/admin/users", get(routes::admin::list_users))
         .route("/api/admin/approve", post(routes::admin::approve))
+        .route("/api/admin/pavlov/generate", post(routes::pavlov::generate))
+        .route("/api/admin/pavlov/status", get(routes::pavlov::status))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("cache-control"),
             HeaderValue::from_static("no-store"),
