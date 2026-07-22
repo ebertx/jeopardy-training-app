@@ -1,83 +1,63 @@
--- Sanity checks for Pavlov cue generation (PG15-compatible).
--- Run after generation: docker run --rm -i postgres:16 psql "$DB_URL" -f - < scripts/verify-pavlov.sql
--- Checks marked "expect 0" are failures when nonzero; others are informational.
+-- Sanity checks for Pavlov v2 cue generation (PG15-compatible).
+-- Run after generation. "expect 0" checks are failures when nonzero.
+-- Thresholds here must match the gate-chosen values in backend/src/pavlov.rs.
 
--- A. Informational: seats filled per category vs blend weight (weights sum
---    to 100 over 1500 seats, so expect total ≈ weight * 15 per category).
+-- A. Informational: per-category active cues and distinct answers.
 SELECT meta_category,
-       count(*)                                   AS total,
-       count(*) FILTER (WHERE status = 'active')  AS active,
-       count(*) FILTER (WHERE status = 'pending') AS pending,
-       count(*) FILTER (WHERE status = 'dropped') AS dropped
+       count(*) FILTER (WHERE status = 'active')  AS active_cues,
+       count(DISTINCT answer_norm) FILTER (WHERE status = 'active') AS answers,
+       count(*) FILTER (WHERE status = 'dropped') AS dropped,
+       count(*) FILTER (WHERE status = 'pending') AS pending
+FROM pavlov_cues GROUP BY 1 ORDER BY 2 DESC;
+
+-- B. expect 0: active cues with a blank display.
+SELECT 'active_blank_display' AS check, count(*) AS fail_rows
+FROM pavlov_cues WHERE status = 'active' AND length(trim(cue_display)) = 0;
+
+-- C. expect 0: duplicate (answer_norm, cue_stem) (belt-and-braces on UNIQUE).
+SELECT 'duplicate_pair' AS check, count(*) AS fail_rows
+FROM (SELECT answer_norm, cue_stem FROM pavlov_cues GROUP BY 1, 2 HAVING count(*) > 1) d;
+
+-- D. expect 0: active cues below the gate thresholds.
+SELECT 'below_thresholds' AS check, count(*) AS fail_rows
 FROM pavlov_cues
-GROUP BY 1
-ORDER BY total DESC;
-
--- B. expect 0: active cues without 2-4 phrases.
-SELECT 'active_phrase_count_out_of_range' AS check, count(*) AS fail_rows
-FROM pavlov_cues
-WHERE status = 'active'
-  AND (coalesce(array_length(cue_phrases, 1), 0) < 2
-       OR coalesce(array_length(cue_phrases, 1), 0) > 4);
-
--- C. expect 0: duplicate normalized answers (belt-and-braces over the UNIQUE).
-SELECT 'duplicate_answer_norm' AS check, count(*) AS fail_rows
-FROM (SELECT answer_norm FROM pavlov_cues GROUP BY 1 HAVING count(*) > 1) d;
-
--- D. expect 0: cues below the frequency floor.
-SELECT 'below_frequency_floor' AS check, count(*) AS fail_rows
-FROM pavlov_cues WHERE answer_freq < 5;
-
--- E. expect 0 (sampled): top mined term does not occur in any of the answer's
---    clues. Verifies mining is grounded in the corpus.
-SELECT 'mined_term_missing_from_clues' AS check, count(*) AS fail_rows
-FROM (
-  SELECT pc.answer_norm, pc.mined_terms[1] AS term
-  FROM pavlov_cues pc
-  WHERE pc.status <> 'dropped' AND cardinality(pc.mined_terms) > 0
-  ORDER BY random()
-  LIMIT 50
-) s
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM jeopardy_questions jq
-  WHERE jq.archived = false AND jq.question IS NOT NULL
-    AND lower(trim(regexp_replace(jq.question, '^(the|a|an) ', '', 'i'))) = s.answer_norm
-    AND EXISTS (
-      SELECT 1 FROM unnest(jq.search_tsv) AS u(lexeme, positions, weights)
-      WHERE u.lexeme = s.term
-    )
+WHERE status = 'active' AND NOT (
+  (array_length(regexp_split_to_array(cue_stem, ' '), 1) = 2 AND support >= 4 AND prec >= 0.5)
+  OR
+  (array_length(regexp_split_to_array(cue_stem, ' '), 1) = 1 AND support >= 6 AND prec >= 0.6)
 );
 
--- F. expect 0: mined term equal to a lexeme of the answer itself
---    (self-referential leak past the SQL + Rust filters), sampled.
-SELECT 'self_referential_term' AS check, count(*) AS fail_rows
+-- E. expect 0 (sampled 50): stored support disagrees with a recount from the
+--    ngram corpus.
+SELECT 'support_mismatch' AS check, count(*) AS fail_rows
 FROM (
-  SELECT pc.answer, pc.mined_terms
-  FROM pavlov_cues pc
-  WHERE cardinality(pc.mined_terms) > 0
-  ORDER BY random()
-  LIMIT 200
+  SELECT id, answer_norm, cue_stem, support FROM pavlov_cues
+  WHERE status <> 'dropped' ORDER BY random() LIMIT 50
 ) s
-WHERE EXISTS (
-  SELECT 1
-  FROM unnest(to_tsvector('english', s.answer)) AS a(lexeme, positions, weights)
-  WHERE a.lexeme = ANY (s.mined_terms)
+WHERE s.support <> (
+  SELECT count(DISTINCT g.clue_id) FROM pavlov_clue_ngrams g
+  WHERE g.answer_norm = s.answer_norm AND g.gram = s.cue_stem
 );
 
--- G. expect 0: an active cue phrase that gives the answer away — contains the
---    whole answer as a word-boundary match, or any >=4-char answer word.
---    (Mirrors phrase_leaks_answer() in backend/src/pavlov.rs.)
+-- F. expect 0: rendered display leaks the answer (whole answer word-boundary
+--    or any >=4-char answer word).
 WITH words AS (
   SELECT pc.id, w.word
   FROM pavlov_cues pc,
        regexp_split_to_table(lower(pc.answer_norm), '[^a-z0-9]+') AS w(word)
   WHERE pc.status = 'active' AND length(w.word) >= 4
 )
-SELECT 'phrase_leaks_answer' AS check, count(*) AS fail_rows
-FROM pavlov_cues pc, unnest(pc.cue_phrases) AS p(phrase)
+SELECT 'display_leaks_answer' AS check, count(*) AS fail_rows
+FROM pavlov_cues pc
 WHERE pc.status = 'active'
   AND (
-    p.phrase ~* ('\m' || regexp_replace(pc.answer_norm, '([.^$*+?()\[\]{}\\|])', '\\\1', 'g') || '\M')
-    OR EXISTS (SELECT 1 FROM words w WHERE w.id = pc.id AND p.phrase ~* ('\m' || w.word || '\M'))
+    pc.cue_display ~* ('\m' || regexp_replace(pc.answer_norm, '([.^$*+?()\[\]{}\\|])', '\\\1', 'g') || '\M')
+    OR EXISTS (SELECT 1 FROM words w WHERE w.id = pc.id AND pc.cue_display ~* ('\m' || w.word || '\M'))
   );
+
+-- G. expect 0: canary — the archetypal cue class must exist.
+SELECT 'canary_welsh_poet_missing' AS check,
+       CASE WHEN EXISTS (
+         SELECT 1 FROM pavlov_cues
+         WHERE answer_norm = 'dylan thomas' AND cue_stem = 'welsh poet' AND status = 'active'
+       ) THEN 0 ELSE 1 END AS fail_rows;
