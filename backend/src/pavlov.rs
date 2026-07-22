@@ -131,6 +131,248 @@ pub fn parse_polish_response(v: &serde_json::Value) -> Vec<PolishOutcome> {
         .collect()
 }
 
+use std::sync::Arc;
+
+use crate::error::AppError;
+use crate::AppState;
+
+/// 0008's normalization of the response text, verbatim.
+const NORM_EXPR: &str = "lower(trim(regexp_replace(jq.question, '^(the|a|an) ', '', 'i')))";
+const TERMS_RAW_LIMIT: i64 = 24; // fetched from SQL before the self-term filter
+const TERMS_KEPT: usize = 8;
+const POLISH_BATCH: i64 = 15;
+
+#[derive(sqlx::FromRow)]
+struct Candidate {
+    norm: String,
+    display: String,
+    freq: i32,
+}
+
+/// Top unmined answers for one category. `recency=false` ranks by answer_freq;
+/// `recency=true` by summed 6-year-half-life decay (mock-test constant).
+async fn select_candidates(
+    state: &Arc<AppState>,
+    category: &str,
+    seats: i64,
+    recency: bool,
+) -> Result<Vec<Candidate>, AppError> {
+    let order = if recency { "recency_wt" } else { "freq" };
+    let sql = format!(
+        "SELECT norm, display, freq FROM (
+           SELECT {NORM_EXPR} AS norm,
+                  mode() WITHIN GROUP (ORDER BY jq.question) AS display,
+                  max(jq.answer_freq) AS freq,
+                  sum(exp(-0.11552 * EXTRACT(EPOCH FROM (now() - jq.air_date)) / 31557600.0)) AS recency_wt
+           FROM jeopardy_questions jq
+           WHERE jq.archived = false AND jq.question IS NOT NULL
+             AND jq.air_date IS NOT NULL AND jq.classifier_category = $1
+           GROUP BY 1
+         ) t
+         WHERE freq >= $2 AND norm NOT IN (SELECT answer_norm FROM pavlov_cues)
+         ORDER BY {order} DESC
+         LIMIT $3"
+    );
+    Ok(sqlx::query_as::<_, Candidate>(&sql)
+        .bind(category)
+        .bind(MIN_FREQ)
+        .bind(seats)
+        .fetch_all(&state.pool)
+        .await?)
+}
+
+/// Distinctive clue lexemes for one answer: TF within the answer's clues ×
+/// log-inverse document frequency corpus-wide, minus the answer's own lexemes.
+async fn mine_terms(
+    state: &Arc<AppState>,
+    norm: &str,
+    display: &str,
+    total_docs: f64,
+) -> Result<Vec<String>, AppError> {
+    let sql = format!(
+        "WITH clues AS (
+           SELECT jq.search_tsv
+           FROM jeopardy_questions jq
+           WHERE jq.archived = false AND jq.question IS NOT NULL
+             AND {NORM_EXPR} = $1
+         ),
+         lex AS (
+           SELECT u.lexeme AS word, count(*)::float8 AS tf
+           FROM clues, unnest(clues.search_tsv) AS u(lexeme, positions, weights)
+           GROUP BY 1
+         )
+         SELECT l.word
+         FROM lex l
+         JOIN pavlov_term_df d ON d.word = l.word
+         WHERE l.word NOT IN (
+           SELECT a.lexeme
+           FROM unnest(to_tsvector('english', $2)) AS a(lexeme, positions, weights)
+         )
+         ORDER BY l.tf * ln($3 / GREATEST(d.ndoc, 1)) DESC
+         LIMIT $4"
+    );
+    let rows: Vec<(String,)> = sqlx::query_as(&sql)
+        .bind(norm)
+        .bind(display)
+        .bind(total_docs)
+        .bind(TERMS_RAW_LIMIT)
+        .fetch_all(&state.pool)
+        .await?;
+    let mut terms =
+        filter_self_terms(display, rows.into_iter().map(|(w,)| w).collect());
+    terms.truncate(TERMS_KEPT);
+    Ok(terms)
+}
+
+/// The 3 most recent clue ids for an answer (reveal examples).
+async fn example_ids(state: &Arc<AppState>, norm: &str) -> Result<Vec<i32>, AppError> {
+    let sql = format!(
+        "SELECT jq.id FROM jeopardy_questions jq
+         WHERE jq.archived = false AND jq.question IS NOT NULL AND {NORM_EXPR} = $1
+         ORDER BY jq.air_date DESC NULLS LAST
+         LIMIT 3"
+    );
+    let rows: Vec<(i32,)> = sqlx::query_as(&sql).bind(norm).fetch_all(&state.pool).await?;
+    Ok(rows.into_iter().map(|(i,)| i).collect())
+}
+
+/// Stage A: fill every category's seats with mined 'pending' rows.
+async fn mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
+    let total_docs: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM jeopardy_questions WHERE archived = false")
+            .fetch_one(&state.pool)
+            .await?;
+    for plan in seat_plan(TOTAL_SEATS) {
+        for (seats, recency) in [(plan.canon, false), (plan.recency, true)] {
+            if seats <= 0 {
+                continue;
+            }
+            // Deficit-aware: seats minus what previous runs already mined here.
+            let have: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pavlov_cues WHERE meta_category = $1",
+            )
+            .bind(&plan.category)
+            .fetch_one(&state.pool)
+            .await?;
+            let want = (plan.canon + plan.recency - have).min(seats);
+            if want <= 0 {
+                continue;
+            }
+            let candidates = select_candidates(state, &plan.category, want, recency).await?;
+            for c in candidates {
+                let terms = mine_terms(state, &c.norm, &c.display, total_docs as f64).await?;
+                if terms.is_empty() {
+                    continue;
+                }
+                let examples = example_ids(state, &c.norm).await?;
+                sqlx::query(
+                    "INSERT INTO pavlov_cues
+                       (answer, answer_norm, meta_category, mined_terms, example_clue_ids, answer_freq)
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     ON CONFLICT (answer_norm) DO NOTHING",
+                )
+                .bind(&c.display)
+                .bind(&c.norm)
+                .bind(&plan.category)
+                .bind(&terms)
+                .bind(&examples)
+                .bind(c.freq)
+                .execute(&state.pool)
+                .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Stage B: polish pending rows in batches; each batch is upserted before the
+/// next call, so an interrupted run resumes where it left off.
+async fn polish_stage(state: &Arc<AppState>) -> Result<(), AppError> {
+    loop {
+        let batch: Vec<(i32, String, Vec<String>, Vec<i32>)> = sqlx::query_as(
+            "SELECT id, answer, mined_terms, example_clue_ids
+             FROM pavlov_cues WHERE status = 'pending' ORDER BY id LIMIT $1",
+        )
+        .bind(POLISH_BATCH)
+        .fetch_all(&state.pool)
+        .await?;
+        if batch.is_empty() {
+            return Ok(());
+        }
+
+        let mut inputs = Vec::with_capacity(batch.len());
+        for (_, answer, terms, ex_ids) in &batch {
+            let clues: Vec<(String,)> = sqlx::query_as(
+                "SELECT coalesce(answer, '') FROM jeopardy_questions WHERE id = ANY($1) LIMIT 2",
+            )
+            .bind(&ex_ids[..])
+            .fetch_all(&state.pool)
+            .await?;
+            inputs.push(PolishInput {
+                answer: answer.clone(),
+                terms: terms.clone(),
+                sample_clues: clues.into_iter().map(|(c,)| c).collect(),
+            });
+        }
+
+        let (system, user) = polish_prompts(&inputs);
+        let response = chat_json_with_model(state, &system, &user).await?;
+        let outcomes = parse_polish_response(&response);
+
+        // Match outcomes back to batch rows by lowercased answer.
+        let mut updated = 0;
+        for out in &outcomes {
+            let key = out.answer.to_lowercase();
+            let Some((id, ..)) = batch
+                .iter()
+                .find(|(_, a, ..)| a.to_lowercase() == key)
+            else {
+                continue;
+            };
+            let status = if out.keep { "active" } else { "dropped" };
+            sqlx::query(
+                "UPDATE pavlov_cues SET status = $2, cue_phrases = $3, model = $4
+                 WHERE id = $1 AND status = 'pending'",
+            )
+            .bind(id)
+            .bind(status)
+            .bind(&out.phrases)
+            .bind(POLISH_MODEL)
+            .execute(&state.pool)
+            .await?;
+            updated += 1;
+        }
+        if updated == 0 {
+            // LLM echoed nothing usable for this batch — drop it rather than
+            // spin forever refetching the same pending rows.
+            let ids: Vec<i32> = batch.iter().map(|(id, ..)| *id).collect();
+            sqlx::query(
+                "UPDATE pavlov_cues SET status = 'dropped', model = $2
+                 WHERE id = ANY($1) AND status = 'pending'",
+            )
+            .bind(&ids)
+            .bind(POLISH_MODEL)
+            .execute(&state.pool)
+            .await?;
+            tracing::warn!("pavlov polish: batch of {} unmatched, dropped", ids.len());
+        }
+    }
+}
+
+async fn chat_json_with_model(
+    state: &Arc<AppState>,
+    system: &str,
+    user: &str,
+) -> Result<serde_json::Value, AppError> {
+    crate::openai::chat_json(&state.config.openai_api_key, POLISH_MODEL, system, user, 0.3).await
+}
+
+/// Full generation run: mine then polish. Both stages are idempotent/resumable.
+pub async fn run_generation(state: &Arc<AppState>) -> Result<(), AppError> {
+    mine_stage(state).await?;
+    polish_stage(state).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
