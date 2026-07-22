@@ -21,7 +21,7 @@
   let genStatus = $state<{ running: boolean; pending: number; active: number; dropped: number } | null>(null);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Server returns cues pre-sorted by test-weight order then frequency;
+  // Server returns cues pre-sorted by test-weight category order then support × precision;
   // grouping just walks that order.
   let filtered = $derived(
     cues.filter((c) => {
@@ -108,8 +108,7 @@
       <a href="/pavlov" class="text-jeopardy-blue hover:underline text-sm">Drill →</a>
     </div>
     <p class="text-sm text-gray-500 mb-6">
-      Signature keyword → answer associations mined from the clue corpus, weighted to the
-      Anytime Test category mix. Suspend rows you don't want in your drill deck.
+      Signature keyword → answer associations mined from the clue corpus — kept only when the phrase recurs across the answer's clues and reliably means that answer. Suspend rows you don't want in your drill deck.
     </p>
 
     {#if isAdmin}
@@ -136,7 +135,7 @@
     <input
       type="text"
       bind:value={search}
-      placeholder="Search answers, phrases, categories…"
+      placeholder="Search cues, answers, categories…"
       class="w-full mb-6 px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-900 focus:border-jeopardy-blue focus:outline-none focus:ring-1 focus:ring-jeopardy-blue"
     />
 

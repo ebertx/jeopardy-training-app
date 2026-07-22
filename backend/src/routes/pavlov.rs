@@ -202,7 +202,7 @@ pub async fn drill_next(
         serve_new(new_remaining, due_count, rand::rng().random())
     };
 
-    // New cue: unseen active cue, introduced canon-first via the exponential race.
+    // New cue: unseen active cue, introduced strongest-evidence-first (support × precision) via the exponential race.
     let pick_new = "SELECT id, cue_display, meta_category FROM pavlov_cues
          WHERE status = 'active'
            AND id NOT IN (SELECT cue_id FROM pavlov_cards WHERE user_id = $1)

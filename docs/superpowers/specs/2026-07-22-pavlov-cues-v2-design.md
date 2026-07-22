@@ -70,7 +70,7 @@ From `pavlov_clue_ngrams`, per (answer_norm, gram):
 - Redundancy pruning: when a qualifying bigram contains a qualifying unigram
   of the same answer (or two qualifying bigrams of the same answer overlap in
   a shared clue-set), keep the higher-scoring gram (score = support × prec)
-  and drop the subsumed one — avoids "milk wood" + "wood" duplicates.
+  and drop the subsumed one — avoids "milk wood" + "wood" duplicates. Implementation prunes on token-subset relation only; the spec's bigram-pair clue-set-overlap case was not implemented (accepted — dilution only, quality verified in e2e).
 - **No quotas, no category seats.** Every qualifying cue enters the deck;
   deck size and category mix fall out of the data. `blend::TARGET_WEIGHTS`
   is no longer used for selection (the category mix is *reported* in the

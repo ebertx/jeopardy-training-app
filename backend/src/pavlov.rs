@@ -1,5 +1,5 @@
 //! Pavlov cue mining: candidate pruning and LLM surface-form rendering
-//! (docs/superpowers/specs/2026-07-21-pavlov-cues-design.md).
+//! (docs/superpowers/specs/2026-07-22-pavlov-cues-v2-design.md).
 
 /// True when a cue phrase gives the answer away: the phrase contains the
 /// whole answer (article-stripped, as a contiguous word sequence) or any
