@@ -83,6 +83,11 @@ counts, per-category mix, and ~15 sample cues at three settings (strict /
 default / loose around the defaults above). The user picks; the chosen
 thresholds are then recorded in this spec.
 
+**Gate outcome (2026-07-22):** user chose **default** — bigrams
+`support >= 4 AND prec >= 0.5`, unigrams `support >= 6 AND prec >= 0.6`
+(9,697 candidate cues / 4,921 answers pre-pruning; strict 4,034 and loose
+22,877 were offered and declined).
+
 ## 4. Surface-form polish (LLM, cosmetic only)
 
 - Batches through `openai.rs` as in v1; resumable pending → active/dropped.
