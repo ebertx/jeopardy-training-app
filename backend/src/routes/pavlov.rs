@@ -177,8 +177,12 @@ pub async fn drill_next(
     .await?;
 
     let day_start = day_start_utc(Utc::now(), tz.as_deref());
+    // `suspend` can create a pavlov_cards row (to persist the suspended flag)
+    // for a cue the user never actually drilled — that row's last_review stays
+    // NULL. Only rows created via `grade` (which always sets last_review) count
+    // as introduced new cards, so exclude last_review IS NULL rows here.
     let new_today: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards WHERE user_id = $1 AND created_at >= $2",
+        "SELECT COUNT(*) FROM pavlov_cards WHERE user_id = $1 AND created_at >= $2 AND last_review IS NOT NULL",
     )
     .bind(user_id)
     .bind(day_start)

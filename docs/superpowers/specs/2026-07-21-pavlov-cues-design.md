@@ -164,3 +164,18 @@ scheduling functions in `srs.rs` are reused, not duplicated.
 
 One-time LLM cost: ~1,500 answers ÷ 15 per batch ≈ 100 calls. Re-runs only
 pay for unpolished answers.
+
+## Accepted deviations
+
+- `status` gained a `pending` value (beyond `active`/`dropped`) to support
+  resumable generation across batch runs.
+- The drill answer endpoint was split into `check` (grade + reveal,
+  stateless) and `grade` (SM-2 rating), rather than a single
+  `POST /pavlov/drill/answer`.
+- The cue browser's search/grouping is implemented client-side; this is
+  equivalent to server-side filtering at the current scale (~1,500 rows).
+- Example clues shown on reveal are the 3 most recent for the answer, not the
+  highest-value ones.
+- Suspend-created card rows (which leave `last_review` NULL) are excluded
+  from the new-card allowance via `last_review IS NOT NULL` in the
+  `drill_next` new-today count.
