@@ -77,8 +77,10 @@ struct CueListRow {
     id: i32,
     answer: String,
     meta_category: String,
-    cue_phrases: Vec<String>,
-    answer_freq: i32,
+    cue_display: String,
+    support: i32,
+    total: i32,
+    prec: f32,
     suspended: bool,
 }
 
@@ -87,7 +89,8 @@ pub async fn cues(
     auth: AuthUser,
 ) -> Result<Json<Value>, AppError> {
     let mut rows: Vec<CueListRow> = sqlx::query_as(
-        "SELECT pc.id, pc.answer, pc.meta_category, pc.cue_phrases, pc.answer_freq,
+        "SELECT pc.id, pc.answer, pc.meta_category, pc.cue_display,
+                pc.support, pc.total, pc.prec,
                 COALESCE(ca.suspended, false) AS suspended
          FROM pavlov_cues pc
          LEFT JOIN pavlov_cards ca ON ca.cue_id = pc.id AND ca.user_id = $1
@@ -99,15 +102,19 @@ pub async fn cues(
     rows.sort_by(|a, b| {
         category_rank(&a.meta_category)
             .cmp(&category_rank(&b.meta_category))
-            .then(b.answer_freq.cmp(&a.answer_freq))
+            .then(
+                (b.support as f32 * b.prec)
+                    .partial_cmp(&(a.support as f32 * a.prec))
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
     let cues: Vec<Value> = rows
         .into_iter()
         .map(|r| {
             json!({
                 "id": r.id, "answer": r.answer, "category": r.meta_category,
-                "cuePhrases": r.cue_phrases, "answerFreq": r.answer_freq,
-                "suspended": r.suspended,
+                "cue": r.cue_display, "support": r.support, "total": r.total,
+                "precision": r.prec, "suspended": r.suspended,
             })
         })
         .collect();
@@ -148,12 +155,12 @@ pub async fn suspend(
 #[derive(sqlx::FromRow)]
 struct DrillCueRow {
     id: i32,
-    cue_phrases: Vec<String>,
+    cue_display: String,
     meta_category: String,
 }
 
 fn drill_card_json(r: DrillCueRow) -> Value {
-    json!({ "cueId": r.id, "cuePhrases": r.cue_phrases, "category": r.meta_category })
+    json!({ "cueId": r.id, "cue": r.cue_display, "category": r.meta_category })
 }
 
 pub async fn drill_next(
@@ -196,11 +203,11 @@ pub async fn drill_next(
     };
 
     // New cue: unseen active cue, introduced canon-first via the exponential race.
-    let pick_new = "SELECT id, cue_phrases, meta_category FROM pavlov_cues
+    let pick_new = "SELECT id, cue_display, meta_category FROM pavlov_cues
          WHERE status = 'active'
            AND id NOT IN (SELECT cue_id FROM pavlov_cards WHERE user_id = $1)
-         ORDER BY -ln(random()) / ln(1 + answer_freq) LIMIT 1";
-    let fetch_due = "SELECT pc.id, pc.cue_phrases, pc.meta_category
+         ORDER BY -ln(random()) / ln(1 + support * prec) LIMIT 1";
+    let fetch_due = "SELECT pc.id, pc.cue_display, pc.meta_category
          FROM pavlov_cards ca
          JOIN pavlov_cues pc ON pc.id = ca.cue_id AND pc.status = 'active'
          WHERE ca.user_id = $1 AND ca.suspended = false AND ca.due <= now()

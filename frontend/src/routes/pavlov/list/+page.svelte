@@ -12,7 +12,7 @@
 
   type Cue = {
     id: number; answer: string; category: string;
-    cuePhrases: string[]; answerFreq: number; suspended: boolean;
+    cue: string; support: number; total: number; precision: number; suspended: boolean;
   };
   let cues = $state<Cue[]>([]);
   let search = $state('');
@@ -30,7 +30,7 @@
       return (
         c.answer.toLowerCase().includes(q) ||
         c.category.toLowerCase().includes(q) ||
-        c.cuePhrases.some((p) => p.toLowerCase().includes(q))
+        c.cue.toLowerCase().includes(q)
       );
     })
   );
@@ -153,13 +153,13 @@
           {#each group.items as cue (cue.id)}
             <div class="p-3 flex items-start gap-3 {cue.suspended ? 'opacity-40' : ''}">
               <div class="flex-1 min-w-0">
-                <div class="font-medium text-gray-900">{cue.answer}
-                  <span class="text-xs text-gray-500 ml-1">×{cue.answerFreq}</span>
+                <div class="text-gray-900">
+                  <span class="font-medium">{cue.cue}</span>
+                  <span class="text-gray-400 mx-1">→</span>
+                  <span>{cue.answer}</span>
                 </div>
-                <div class="flex flex-wrap gap-1.5 mt-1">
-                  {#each cue.cuePhrases as phrase}
-                    <span class="px-2 py-0.5 rounded-full border border-gray-300 text-xs text-gray-600">{phrase}</span>
-                  {/each}
+                <div class="text-xs text-gray-500 mt-0.5">
+                  in {cue.support} of its clues · {Math.round(cue.precision * 100)}% precise corpus-wide ({cue.support}/{cue.total})
                 </div>
               </div>
               <button

@@ -9,7 +9,7 @@
     if (!auth.loading && !auth.user) goto('/login');
   });
 
-  let card = $state<{ cueId: number; cuePhrases: string[]; category: string } | null>(null);
+  let card = $state<{ cueId: number; cue: string; category: string } | null>(null);
   let isNew = $state(false);
   let dueCount = $state(0);
   let newRemaining = $state(0);
@@ -141,10 +141,8 @@
           {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
         </div>
 
-        <div class="flex flex-wrap gap-2 mb-6">
-          {#each card.cuePhrases as phrase}
-            <span class="px-3 py-1.5 rounded-full border border-gray-300 text-lg text-gray-900">{phrase}</span>
-          {/each}
+        <div class="mb-6">
+          <span class="px-4 py-2 rounded-full border border-gray-300 text-xl text-gray-900 inline-block">{card.cue}</span>
         </div>
 
         {#if !result}
