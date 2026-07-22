@@ -16,9 +16,7 @@
   let done = $state(false);
   let nextDueAt = $state<string | null>(null);
   let dueSoonCount = $state(0);
-  let typed = $state('');
   let result = $state<{
-    correct: boolean;
     answer: string;
     examples: Array<{ clue: string; category: string | null; airDate: string | null }>;
   } | null>(null);
@@ -31,7 +29,6 @@
     loading = true;
     error = '';
     result = null;
-    typed = '';
     try {
       const res = await api.get('/api/pavlov/drill/next');
       dueCount = res.dueCount ?? 0;
@@ -53,15 +50,14 @@
     }
   }
 
-  async function check() {
+  async function reveal() {
     if (!card || submitting) return;
     submitting = true;
     error = '';
     try {
-      result = await api.post('/api/pavlov/drill/check', { cueId: card.cueId, typed });
-      session = { total: session.total + 1, correct: session.correct + (result!.correct ? 1 : 0) };
+      result = await api.post('/api/pavlov/drill/check', { cueId: card.cueId });
     } catch (e: any) {
-      error = e.message || 'Check failed';
+      error = e.message || 'Reveal failed';
     } finally {
       submitting = false;
     }
@@ -72,6 +68,10 @@
     submitting = true;
     try {
       await api.post('/api/pavlov/drill/grade', { cueId: card.cueId, rating });
+      session = {
+        total: session.total + 1,
+        correct: session.correct + (rating === 'wrong' ? 0 : 1),
+      };
       await fetchNext();
     } catch (e: any) {
       error = e.message || 'Grade failed';
@@ -80,14 +80,24 @@
     }
   }
 
+  // Space/Enter reveals; 1/2/3 self-grade after reveal (honesty mode).
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && card && !result) check();
+    if (!card || submitting) return;
+    if (!result && (e.key === ' ' || e.key === 'Enter')) {
+      e.preventDefault();
+      reveal();
+    } else if (result) {
+      if (e.key === '1') grade('wrong');
+      else if (e.key === '2') grade('got_it');
+      else if (e.key === '3') grade('too_easy');
+    }
   }
 
   onMount(fetchNext);
 </script>
 
 <svelte:head><title>Pavlov Drill</title></svelte:head>
+<svelte:window onkeydown={onKeydown} />
 
 <div class="min-h-screen bg-gray-50 py-6 sm:py-8 px-4">
   <div class="max-w-2xl mx-auto">
@@ -138,25 +148,17 @@
         </div>
 
         {#if !result}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            type="text"
-            bind:value={typed}
-            onkeydown={onKeydown}
-            autofocus
-            placeholder="Who/what is…?"
-            class="w-full px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-900 focus:border-jeopardy-blue focus:outline-none focus:ring-1 focus:ring-jeopardy-blue"
-          />
           <button
-            onclick={check}
+            onclick={reveal}
             disabled={submitting}
-            class="mt-3 px-4 py-2 rounded-lg bg-jeopardy-blue text-white font-medium hover:bg-blue-800 transition-colors disabled:opacity-50"
+            class="px-4 py-2 rounded-lg bg-jeopardy-blue text-white font-medium hover:bg-blue-800 transition-colors disabled:opacity-50"
           >
-            Check
+            Show answer
           </button>
+          <span class="ml-3 text-xs text-gray-400">Space/Enter</span>
         {:else}
-          <div class="mb-4 p-3 rounded-lg {result.correct ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-            {result.correct ? 'Correct:' : 'Answer:'} <span class="font-semibold">{result.answer}</span>
+          <div class="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-200 text-gray-900">
+            Answer: <span class="font-semibold">{result.answer}</span>
           </div>
           {#if result.examples.length > 0}
             <div class="mb-4 text-sm text-gray-600 space-y-2">
@@ -165,16 +167,14 @@
               {/each}
             </div>
           {/if}
-          <div class="flex gap-2">
-            {#if result.correct}
-              <button onclick={() => grade('got_it')} disabled={submitting}
-                class="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold disabled:opacity-50 transition-colors">Got it</button>
-              <button onclick={() => grade('too_easy')} disabled={submitting}
-                class="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 transition-colors">Too easy</button>
-            {:else}
-              <button onclick={() => grade('wrong')} disabled={submitting}
-                class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-50 transition-colors">Continue</button>
-            {/if}
+          <div class="flex gap-2 items-center">
+            <button onclick={() => grade('wrong')} disabled={submitting}
+              class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-50 transition-colors">Wrong</button>
+            <button onclick={() => grade('got_it')} disabled={submitting}
+              class="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold disabled:opacity-50 transition-colors">Got it</button>
+            <button onclick={() => grade('too_easy')} disabled={submitting}
+              class="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 transition-colors">Too easy</button>
+            <span class="text-xs text-gray-400">1 / 2 / 3</span>
           </div>
         {/if}
       </div>

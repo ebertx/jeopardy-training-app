@@ -265,10 +265,13 @@ pub async fn drill_next(
 #[serde(rename_all = "camelCase")]
 pub struct CheckBody {
     pub cue_id: i32,
-    pub typed: String,
+    /// Optional: honesty-mode reveal sends no typed answer; grading is then
+    /// the user's own via `grade`. When present, graded by answer_match.
+    pub typed: Option<String>,
 }
 
-/// Grade the typed answer and reveal — no SRS state change (that's `grade`).
+/// Reveal the answer (optionally grading a typed attempt) — no SRS state
+/// change (that's `grade`).
 pub async fn drill_check(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
@@ -281,7 +284,7 @@ pub async fn drill_check(
     .fetch_optional(&state.pool)
     .await?;
     let (answer, example_ids) = row.ok_or_else(|| AppError::NotFound("No such cue".into()))?;
-    let correct = answer_match::is_correct(&body.typed, &answer);
+    let correct = body.typed.as_deref().map(|t| answer_match::is_correct(t, &answer));
 
     let examples: Vec<(String, Option<String>, Option<chrono::NaiveDate>)> = sqlx::query_as(
         "SELECT coalesce(answer, ''), category, air_date FROM jeopardy_questions

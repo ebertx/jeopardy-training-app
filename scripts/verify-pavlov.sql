@@ -64,3 +64,20 @@ WHERE EXISTS (
   FROM unnest(to_tsvector('english', s.answer)) AS a(lexeme, positions, weights)
   WHERE a.lexeme = ANY (s.mined_terms)
 );
+
+-- G. expect 0: an active cue phrase that gives the answer away — contains the
+--    whole answer as a word-boundary match, or any >=4-char answer word.
+--    (Mirrors phrase_leaks_answer() in backend/src/pavlov.rs.)
+WITH words AS (
+  SELECT pc.id, w.word
+  FROM pavlov_cues pc,
+       regexp_split_to_table(lower(pc.answer_norm), '[^a-z0-9]+') AS w(word)
+  WHERE pc.status = 'active' AND length(w.word) >= 4
+)
+SELECT 'phrase_leaks_answer' AS check, count(*) AS fail_rows
+FROM pavlov_cues pc, unnest(pc.cue_phrases) AS p(phrase)
+WHERE pc.status = 'active'
+  AND (
+    p.phrase ~* ('\m' || regexp_replace(pc.answer_norm, '([.^$*+?()\[\]{}\\|])', '\\\1', 'g') || '\M')
+    OR EXISTS (SELECT 1 FROM words w WHERE w.id = pc.id AND p.phrase ~* ('\m' || w.word || '\M'))
+  );

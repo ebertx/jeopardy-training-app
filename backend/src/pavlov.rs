@@ -57,6 +57,37 @@ pub fn filter_self_terms(answer: &str, terms: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// True when a cue phrase gives the answer away: the phrase contains the
+/// whole answer (article-stripped, as a contiguous word sequence) or any
+/// single answer word of >= 4 chars. Token-based, case-insensitive — token
+/// equality gives word-boundary semantics without a regex dependency.
+pub fn phrase_leaks_answer(answer: &str, phrase: &str) -> bool {
+    fn tokens(s: &str) -> Vec<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_string())
+            .collect()
+    }
+    let mut answer_tokens = tokens(answer);
+    if matches!(answer_tokens.first().map(|s| s.as_str()), Some("a" | "an" | "the"))
+        && answer_tokens.len() > 1
+    {
+        answer_tokens.remove(0);
+    }
+    if answer_tokens.is_empty() {
+        return false;
+    }
+    let phrase_tokens = tokens(phrase);
+    let whole = phrase_tokens
+        .windows(answer_tokens.len())
+        .any(|w| w == answer_tokens.as_slice());
+    let word = answer_tokens
+        .iter()
+        .any(|a| a.len() >= 4 && phrase_tokens.iter().any(|p| p == a));
+    whole || word
+}
+
 #[derive(Debug, Clone)]
 pub struct PolishInput {
     pub answer: String,
@@ -79,6 +110,8 @@ For each answer you receive its most distinctive clue keywords (stemmed) and sam
 Write 2-4 short human-readable cue phrases per answer — the trigger associations a contestant \
 should learn (e.g. for Solomon: \"wise king\", \"Ecclesiastes ascribed to\"). \
 Every phrase must be grounded in the given keywords or sample clues; never invent associations. \
+A cue phrase must NEVER contain the answer itself or any distinctive word of the answer — \
+it must trigger recall of the answer, not reveal it. \
 Set keep=false when the keywords are too generic or self-referential to make useful cues. \
 Respond with JSON only: {\"results\": [{\"answer\": string (echoed verbatim), \
 \"keep\": boolean, \"cue_phrases\": [string]}]}"
@@ -100,7 +133,8 @@ Respond with JSON only: {\"results\": [{\"answer\": string (echoed verbatim), \
 }
 
 /// Lenient parse: items without an answer string are skipped; phrases are
-/// trimmed, de-blanked, capped at 4; keep with < 2 phrases demotes to dropped.
+/// trimmed, de-blanked, stripped of answer-leaking phrases, capped at 4;
+/// keep with < 2 surviving phrases demotes to dropped.
 pub fn parse_polish_response(v: &serde_json::Value) -> Vec<PolishOutcome> {
     let Some(results) = v.get("results").and_then(|r| r.as_array()) else {
         return vec![];
@@ -120,6 +154,7 @@ pub fn parse_polish_response(v: &serde_json::Value) -> Vec<PolishOutcome> {
                         .filter_map(|s| s.as_str())
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
+                        .filter(|s| !phrase_leaks_answer(&answer, s))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -484,5 +519,48 @@ mod tests {
     fn parse_polish_response_of_garbage_is_empty() {
         assert!(parse_polish_response(&serde_json::json!({"nope": 1})).is_empty());
         assert!(parse_polish_response(&serde_json::json!("string")).is_empty());
+    }
+
+    #[test]
+    fn phrase_leaks_on_whole_answer_even_when_short() {
+        // Whole answer as a standalone word leaks, regardless of length.
+        assert!(phrase_leaks_answer("13", "13 stripes on flag"));
+        assert!(phrase_leaks_answer("a unicorn", "lion and unicorn rhyme"));
+        assert!(phrase_leaks_answer("Gibraltar", "Rock of Gibraltar"));
+    }
+
+    #[test]
+    fn phrase_leaks_on_long_answer_word_but_not_prefix_or_short() {
+        // A >=4-char word of the answer leaks even without the full answer.
+        assert!(phrase_leaks_answer("Ernest Hemingway", "Hemingway's Paris years"));
+        // Prefix inside a longer word is not a leak ("D" vs "Deschanel").
+        assert!(!phrase_leaks_answer("D", "Zooey Deschanel's movie title"));
+        // Short words (<4) from a multi-word answer don't count on their own.
+        assert!(!phrase_leaks_answer("Tin Pan Alley", "pan flute music"));
+    }
+
+    #[test]
+    fn phrase_not_leaking_for_ordinary_cues() {
+        assert!(!phrase_leaks_answer("Solomon", "wise king"));
+        assert!(!phrase_leaks_answer("Solomon", "Ecclesiastes ascribed to"));
+        assert!(!phrase_leaks_answer("a pearl", "June birthstone"));
+    }
+
+    #[test]
+    fn parse_polish_response_strips_leaking_phrases_and_demotes_below_floor() {
+        let v = serde_json::json!({
+            "results": [
+                { "answer": "13", "keep": true,
+                  "cue_phrases": ["13 stripes on flag", "unlucky number", "baker's dozen"] },
+                { "answer": "Gibraltar", "keep": true,
+                  "cue_phrases": ["Rock of Gibraltar", "strait to Africa"] }
+            ]
+        });
+        let out = parse_polish_response(&v);
+        assert_eq!(out[0].phrases, vec!["unlucky number".to_string(), "baker's dozen".to_string()]);
+        assert!(out[0].keep);
+        // Gibraltar drops to one clean phrase -> demoted.
+        assert_eq!(out[1].phrases, vec!["strait to Africa".to_string()]);
+        assert!(!out[1].keep);
     }
 }
