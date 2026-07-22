@@ -36,10 +36,14 @@ with separate SRS state.
   `search_tsv` leaked category names and the answer text into the signal).
   - Columns: `clue_id`, `answer_norm` (0008 normalization), `gram`,
     `n` (1|2).
-  - Scope: `archived = false`, `question IS NOT NULL`,
-    `answer_freq >= 4` (an answer below 4 clues cannot reach support 4).
+  - Scope: **all** clues with `archived = false AND question IS NOT NULL` —
+    the precision denominator must count every corpus occurrence of a gram,
+    including in clues of rare answers (restricting the table to freq ≥ 4
+    answers would inflate precision). Only *candidate aggregation* (§2) is
+    restricted to answers that can qualify.
   - Indexes on `(gram)` and `(answer_norm)`.
-  - NOTE: heavy one-time build (~10–20M rows, minutes). Apply during low use.
+  - NOTE: heavy one-time build (~40–60M rows, minutes to tens of minutes).
+    Apply during low use.
 - `pavlov_cues` rebuilt (v1 table dropped — approved):
   - `id`, `answer` (display), `answer_norm`, `meta_category`,
     `cue_stem` (the mined gram), `cue_display` (natural surface form),
@@ -54,8 +58,10 @@ with separate SRS state.
 From `pavlov_clue_ngrams`, per (answer_norm, gram):
 
 - `support` = distinct clues of that answer containing the gram.
-- `total` = distinct clues corpus-wide containing the gram (within the
-  freq ≥ 4 scope).
+- `total` = distinct clues corpus-wide containing the gram (full corpus —
+  see §1 scope note).
+- Candidate aggregation restricted to `answer_freq >= 4` answers (rarer
+  answers cannot reach the support floor).
 - `prec` = support / total.
 - Qualify when: bigrams `support >= 4 AND prec >= 0.5`; unigrams
   `support >= 6 AND prec >= 0.6` (stricter — single stems are noisier).
