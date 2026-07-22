@@ -164,92 +164,206 @@ use crate::AppState;
 
 /// 0008's normalization of the response text, verbatim.
 const NORM_EXPR: &str = "lower(trim(regexp_replace(jq.question, '^(the|a|an) ', '', 'i')))";
-const TERMS_RAW_LIMIT: i64 = 24; // fetched from SQL before the self-term filter
-const TERMS_KEPT: usize = 8;
-const POLISH_BATCH: i64 = 15;
+
+// Thresholds fixed at the 2026-07-22 preview gate (spec §3).
+pub const BIGRAM_MIN_SUPPORT: i64 = 4;
+pub const BIGRAM_MIN_PREC: f64 = 0.5;
+pub const UNIGRAM_MIN_SUPPORT: i64 = 6;
+pub const UNIGRAM_MIN_PREC: f64 = 0.6;
+const MIN_ANSWER_FREQ: i32 = 4;
+const RENDER_BATCH: i64 = 15;
+pub const POLISH_MODEL: &str = "gpt-4o";
 
 #[derive(sqlx::FromRow)]
-struct Candidate {
-    norm: String,
-    display: String,
-    freq: i32,
+struct CandidateRow {
+    answer_norm: String,
+    gram: String,
+    n: i16,
+    support: i64,
+    total: i64,
+    prec: f64,
 }
 
-/// Top unmined answers for one category. `recency=false` ranks by answer_freq;
-/// `recency=true` by summed 6-year-half-life decay (mock-test constant).
-///
-/// STUB (Task 4): v1 body pruned along with `MIN_FREQ`; Task 5 replaces this
-/// stage's SQL wholesale, so it is left as a placeholder rather than patched.
-#[allow(unused_variables, dead_code)]
-async fn select_candidates(
-    state: &Arc<AppState>,
-    category: &str,
-    seats: i64,
-    recency: bool,
-) -> Result<Vec<Candidate>, AppError> {
-    todo!("replaced wholesale in Task 5")
-}
-
-/// Distinctive clue lexemes for one answer: TF within the answer's clues ×
-/// log-inverse document frequency corpus-wide, minus the answer's own lexemes.
-///
-/// STUB (Task 4): v1 body called the now-deleted `filter_self_terms`; Task 5
-/// replaces this stage's SQL wholesale, so it is left as a placeholder.
-#[allow(unused_variables, dead_code)]
-async fn mine_terms(
-    state: &Arc<AppState>,
-    norm: &str,
-    display: &str,
-    total_docs: f64,
-) -> Result<Vec<String>, AppError> {
-    todo!("replaced wholesale in Task 5")
-}
-
-/// The 3 most recent clue ids for an answer (reveal examples).
-async fn example_ids(state: &Arc<AppState>, norm: &str) -> Result<Vec<i32>, AppError> {
+/// All qualifying (gram, answer) pairs. Support is counted within eligible
+/// answers; totals (precision denominators) over the full corpus.
+async fn candidate_rows(state: &Arc<AppState>) -> Result<Vec<CueCandidate>, AppError> {
     let sql = format!(
-        "SELECT jq.id FROM jeopardy_questions jq
-         WHERE jq.archived = false AND jq.question IS NOT NULL AND {NORM_EXPR} = $1
-         ORDER BY jq.air_date DESC NULLS LAST
-         LIMIT 3"
+        "WITH eligible AS (
+           SELECT {NORM_EXPR} AS norm
+           FROM jeopardy_questions jq
+           WHERE jq.archived = false AND jq.question IS NOT NULL
+           GROUP BY 1 HAVING max(jq.answer_freq) >= $5
+         ), sup AS (
+           SELECT g.answer_norm, g.gram, g.n, count(DISTINCT g.clue_id) AS support
+           FROM pavlov_clue_ngrams g
+           WHERE g.answer_norm IN (SELECT norm FROM eligible)
+           GROUP BY 1, 2, 3
+           HAVING count(DISTINCT g.clue_id) >= LEAST($1, $3)
+         ), tot AS (
+           SELECT g.gram, count(DISTINCT g.clue_id) AS total
+           FROM pavlov_clue_ngrams g
+           WHERE g.gram IN (SELECT DISTINCT gram FROM sup)
+           GROUP BY 1
+         )
+         SELECT s.answer_norm, s.gram, s.n, s.support, t.total,
+                s.support::float8 / t.total AS prec
+         FROM sup s JOIN tot t USING (gram)
+         WHERE (s.n = 2 AND s.support >= $1 AND s.support::float8 / t.total >= $2)
+            OR (s.n = 1 AND s.support >= $3 AND s.support::float8 / t.total >= $4)"
     );
-    let rows: Vec<(i32,)> = sqlx::query_as(&sql).bind(norm).fetch_all(&state.pool).await?;
-    Ok(rows.into_iter().map(|(i,)| i).collect())
+    let rows: Vec<CandidateRow> = sqlx::query_as(&sql)
+        .bind(BIGRAM_MIN_SUPPORT)
+        .bind(BIGRAM_MIN_PREC)
+        .bind(UNIGRAM_MIN_SUPPORT)
+        .bind(UNIGRAM_MIN_PREC)
+        .bind(MIN_ANSWER_FREQ)
+        .fetch_all(&state.pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| CueCandidate {
+            answer_norm: r.answer_norm,
+            gram: r.gram,
+            n: r.n,
+            support: r.support,
+            total: r.total,
+            prec: r.prec,
+        })
+        .collect())
 }
 
-/// Stage A: fill every category's seats with mined 'pending' rows.
-///
-/// STUB (Task 4): v1 body depended on the removed `seat_plan`/`TOTAL_SEATS`;
-/// Task 5 replaces this stage wholesale.
-#[allow(unused_variables, dead_code)]
+/// Stage A: select candidates, filter leaks, prune redundancy, insert
+/// 'pending' rows. Idempotent via ON CONFLICT DO NOTHING.
 async fn mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
-    todo!("replaced wholesale in Task 5")
+    let raw = candidate_rows(state).await?;
+    let unleaky: Vec<CueCandidate> = raw
+        .into_iter()
+        .filter(|c| !phrase_leaks_answer(&c.answer_norm, &c.gram))
+        .collect();
+    let kept = prune_redundant(unleaky);
+    tracing::info!("pavlov v2 mine: {} cues after leak filter + pruning", kept.len());
+
+    for c in kept {
+        let (display, category): (String, Option<String>) = {
+            let sql = format!(
+                "SELECT mode() WITHIN GROUP (ORDER BY jq.question),
+                        mode() WITHIN GROUP (ORDER BY jq.classifier_category)
+                 FROM jeopardy_questions jq
+                 WHERE jq.archived = false AND jq.question IS NOT NULL
+                   AND {NORM_EXPR} = $1"
+            );
+            sqlx::query_as(&sql).bind(&c.answer_norm).fetch_one(&state.pool).await?
+        };
+        let examples: Vec<(i32,)> = sqlx::query_as(
+            "SELECT g.clue_id FROM pavlov_clue_ngrams g
+             JOIN jeopardy_questions jq ON jq.id = g.clue_id
+             WHERE g.answer_norm = $1 AND g.gram = $2
+             GROUP BY g.clue_id, jq.air_date
+             ORDER BY jq.air_date DESC NULLS LAST LIMIT 3",
+        )
+        .bind(&c.answer_norm)
+        .bind(&c.gram)
+        .fetch_all(&state.pool)
+        .await?;
+        let example_ids: Vec<i32> = examples.into_iter().map(|(i,)| i).collect();
+
+        sqlx::query(
+            "INSERT INTO pavlov_cues
+               (answer, answer_norm, meta_category, cue_stem, support, total, prec, example_clue_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (answer_norm, cue_stem) DO NOTHING",
+        )
+        .bind(&display)
+        .bind(&c.answer_norm)
+        .bind(category.unwrap_or_else(|| "Miscellaneous".to_string()))
+        .bind(&c.gram)
+        .bind(c.support as i32)
+        .bind(c.total as i32)
+        .bind(c.prec as f32)
+        .bind(&example_ids)
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(())
 }
 
-/// Stage B: polish pending rows in batches; each batch is upserted before the
-/// next call, so an interrupted run resumes where it left off.
-///
-/// STUB (Task 4): v1 body depended on the removed `PolishInput`/
-/// `polish_prompts`/`parse_polish_response`; Task 5 replaces this stage
-/// wholesale with the render-based contract.
-#[allow(unused_variables, dead_code)]
-async fn polish_stage(state: &Arc<AppState>) -> Result<(), AppError> {
-    todo!("replaced wholesale in Task 5")
+/// Stage B: render surface forms for pending cues in batches; upserts per
+/// batch so an interrupted run resumes where it left off.
+async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
+    loop {
+        let batch: Vec<(i32, String, String, Vec<i32>)> = sqlx::query_as(
+            "SELECT id, answer, cue_stem, example_clue_ids
+             FROM pavlov_cues WHERE status = 'pending' ORDER BY id LIMIT $1",
+        )
+        .bind(RENDER_BATCH)
+        .fetch_all(&state.pool)
+        .await?;
+        if batch.is_empty() {
+            return Ok(());
+        }
+
+        let mut inputs = Vec::with_capacity(batch.len());
+        for (_, answer, gram, ex_ids) in &batch {
+            let clues: Vec<(String,)> = sqlx::query_as(
+                "SELECT coalesce(answer, '') FROM jeopardy_questions WHERE id = ANY($1) LIMIT 2",
+            )
+            .bind(&ex_ids[..])
+            .fetch_all(&state.pool)
+            .await?;
+            inputs.push(RenderInput {
+                answer: answer.clone(),
+                gram: gram.clone(),
+                sample_clues: clues.into_iter().map(|(c,)| c).collect(),
+            });
+        }
+
+        let (system, user) = render_prompts(&inputs);
+        let response =
+            crate::openai::chat_json(&state.config.openai_api_key, POLISH_MODEL, &system, &user, 0.3)
+                .await?;
+        let outcomes = parse_render_response(&response);
+
+        let mut updated = 0;
+        for out in &outcomes {
+            let key = (out.answer.to_lowercase(), out.gram.as_str());
+            let Some((id, ..)) = batch
+                .iter()
+                .find(|(_, a, g, _)| (a.to_lowercase(), g.as_str()) == key)
+            else {
+                continue;
+            };
+            let status = if out.keep { "active" } else { "dropped" };
+            sqlx::query(
+                "UPDATE pavlov_cues SET status = $2, cue_display = $3, model = $4
+                 WHERE id = $1 AND status = 'pending'",
+            )
+            .bind(id)
+            .bind(status)
+            .bind(&out.display)
+            .bind(POLISH_MODEL)
+            .execute(&state.pool)
+            .await?;
+            updated += 1;
+        }
+        if updated == 0 {
+            let ids: Vec<i32> = batch.iter().map(|(id, ..)| *id).collect();
+            sqlx::query(
+                "UPDATE pavlov_cues SET status = 'dropped', model = $2
+                 WHERE id = ANY($1) AND status = 'pending'",
+            )
+            .bind(&ids)
+            .bind(POLISH_MODEL)
+            .execute(&state.pool)
+            .await?;
+            tracing::warn!("pavlov render: batch of {} unmatched, dropped", ids.len());
+        }
+    }
 }
 
-#[allow(dead_code)]
-async fn chat_json_with_model(
-    state: &Arc<AppState>,
-    system: &str,
-    user: &str,
-) -> Result<serde_json::Value, AppError> {
-    crate::openai::chat_json(&state.config.openai_api_key, "gpt-4o", system, user, 0.3).await
-}
-
-/// Full generation run: mine then polish. Both stages are idempotent/resumable.
+/// Full v2 generation: mine then render. Both stages idempotent/resumable.
 pub async fn run_generation(state: &Arc<AppState>) -> Result<(), AppError> {
     mine_stage(state).await?;
-    polish_stage(state).await
+    render_stage(state).await
 }
 
 #[cfg(test)]
