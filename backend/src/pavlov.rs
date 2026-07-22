@@ -298,15 +298,28 @@ struct StandardCueRow {
 }
 
 /// Stage A2: hint-tier top-up. Only answers with < 3 standard cues; keeps at
-/// most (3 - standard_count) best hint candidates per answer after leak
+/// most (3 - total_count) best hint candidates per answer after leak
 /// filtering and pruning against the answer's standard cues.
+///
+/// The deficit counts ALL non-dropped cues for the answer (standard + hint +
+/// pending), not just standard ones — otherwise hint cues from a prior run
+/// don't reduce the deficit and every regenerate re-tops-up with next-best
+/// hint-band candidates, creating unbounded surplus cues across runs. We
+/// still require at least one standard cue to qualify (hint-only answers
+/// have no card and must not be topped up).
+///
+/// Note: surplus hint cues left over from pre-fix runs are harmless —
+/// assembly caps phrases at 3 per answer regardless of how many cue rows
+/// exist.
 async fn hint_mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
-    // Deficit per answer over non-dropped standard cues (pending count too:
+    // Deficit per answer over all non-dropped cues (pending count too:
     // renders may still be in flight on a resumed run).
     let deficits: Vec<(String, i64)> = sqlx::query_as(
         "SELECT answer_norm, 3 - count(*) AS deficit
-         FROM pavlov_cues WHERE tier = 'standard' AND status <> 'dropped'
-         GROUP BY 1 HAVING count(*) < 3",
+         FROM pavlov_cues WHERE status <> 'dropped'
+         GROUP BY 1
+         HAVING count(*) < 3
+            AND count(*) FILTER (WHERE tier = 'standard') >= 1",
     )
     .fetch_all(&state.pool)
     .await?;
