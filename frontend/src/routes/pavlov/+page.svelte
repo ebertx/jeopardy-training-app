@@ -9,7 +9,11 @@
     if (!auth.loading && !auth.user) goto('/login');
   });
 
-  let card = $state<{ cueId: number; cue: string; category: string } | null>(null);
+  let card = $state<{
+    answerId: number;
+    phrases: Array<{ text: string; tier: string }>;
+    category: string;
+  } | null>(null);
   let isNew = $state(false);
   let dueCount = $state(0);
   let newRemaining = $state(0);
@@ -55,7 +59,7 @@
     submitting = true;
     error = '';
     try {
-      result = await api.post('/api/pavlov/drill/check', { cueId: card.cueId });
+      result = await api.post('/api/pavlov/drill/check', { answerId: card.answerId });
     } catch (e: any) {
       error = e.message || 'Reveal failed';
     } finally {
@@ -67,7 +71,7 @@
     if (!card || submitting) return;
     submitting = true;
     try {
-      await api.post('/api/pavlov/drill/grade', { cueId: card.cueId, rating });
+      await api.post('/api/pavlov/drill/grade', { answerId: card.answerId, rating });
       session = {
         total: session.total + 1,
         correct: session.correct + (rating === 'wrong' ? 0 : 1),
@@ -141,8 +145,13 @@
           {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
         </div>
 
-        <div class="mb-6">
-          <span class="px-4 py-2 rounded-full border border-gray-300 text-xl text-gray-900 inline-block">{card.cue}</span>
+        <div class="mb-6 flex flex-wrap gap-2">
+          {#each card.phrases as phrase}
+            <span class="px-4 py-2 rounded-full border text-xl inline-block
+              {phrase.tier === 'hint'
+                ? 'border-gray-200 text-gray-500'
+                : 'border-gray-300 text-gray-900'}">{phrase.text}</span>
+          {/each}
         </div>
 
         {#if !result}

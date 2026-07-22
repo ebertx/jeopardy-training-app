@@ -10,11 +10,15 @@
   });
   let isAdmin = $derived(auth.user?.role === 'admin');
 
-  type Cue = {
-    id: number; answer: string; category: string;
-    cue: string; support: number; total: number; precision: number; suspended: boolean;
+  type Phrase = {
+    text: string; tier: string;
+    support?: number; total?: number; precision?: number;
   };
-  let cues = $state<Cue[]>([]);
+  type Card = {
+    id: number; answer: string; category: string;
+    phrases: Phrase[]; suspended: boolean;
+  };
+  let cards = $state<Card[]>([]);
   let search = $state('');
   let loading = $state(true);
   let error = $state('');
@@ -24,18 +28,18 @@
   // Server returns cues pre-sorted by test-weight category order then support × precision;
   // grouping just walks that order.
   let filtered = $derived(
-    cues.filter((c) => {
+    cards.filter((c) => {
       const q = search.trim().toLowerCase();
       if (!q) return true;
       return (
         c.answer.toLowerCase().includes(q) ||
         c.category.toLowerCase().includes(q) ||
-        c.cue.toLowerCase().includes(q)
+        c.phrases.some((p) => p.text.toLowerCase().includes(q))
       );
     })
   );
   let grouped = $derived.by(() => {
-    const groups: Array<{ category: string; items: Cue[] }> = [];
+    const groups: Array<{ category: string; items: Card[] }> = [];
     for (const c of filtered) {
       const last = groups[groups.length - 1];
       if (last && last.category === c.category) last.items.push(c);
@@ -47,8 +51,8 @@
   async function load() {
     loading = true;
     try {
-      const res = await api.get('/api/pavlov/cues');
-      cues = res.cues ?? [];
+      const res = await api.get('/api/pavlov/answers');
+      cards = res.answers ?? [];
     } catch (e: any) {
       error = e.message || 'Failed to load cues';
     } finally {
@@ -56,11 +60,11 @@
     }
   }
 
-  async function toggleSuspend(cue: Cue) {
-    const next = !cue.suspended;
+  async function toggleSuspend(card: Card) {
+    const next = !card.suspended;
     try {
-      await api.post(`/api/pavlov/cues/${cue.id}/suspend`, { suspended: next });
-      cue.suspended = next;
+      await api.post(`/api/pavlov/answers/${card.id}/suspend`, { suspended: next });
+      card.suspended = next;
     } catch (e: any) {
       error = e.message || 'Suspend failed';
     }
@@ -141,7 +145,7 @@
 
     {#if loading}
       <p class="text-gray-500">Loading…</p>
-    {:else if cues.length === 0}
+    {:else if cards.length === 0}
       <p class="text-gray-500">No cues yet{isAdmin ? ' — run Generate above.' : '.'}</p>
     {:else}
       {#each grouped as group}
@@ -149,23 +153,25 @@
           {group.category} <span class="text-gray-500 text-sm font-normal">({group.items.length})</span>
         </h2>
         <div class="divide-y divide-gray-200 border border-gray-200 rounded-xl bg-white shadow-sm overflow-hidden">
-          {#each group.items as cue (cue.id)}
-            <div class="p-3 flex items-start gap-3 {cue.suspended ? 'opacity-40' : ''}">
+          {#each group.items as card (card.id)}
+            <div class="p-3 flex items-start gap-3 {card.suspended ? 'opacity-40' : ''}">
               <div class="flex-1 min-w-0">
                 <div class="text-gray-900">
-                  <span class="font-medium">{cue.cue}</span>
+                  {#each card.phrases as phrase, i}
+                    {#if i > 0}<span class="text-gray-400 mx-1">·</span>{/if}
+                    <span class="{phrase.tier === 'hint' ? 'text-gray-500' : 'font-medium'}"
+                      >{phrase.text}{#if phrase.support}
+                        <span class="text-xs text-gray-400">({phrase.support}/{phrase.total})</span>{/if}</span>
+                  {/each}
                   <span class="text-gray-400 mx-1">→</span>
-                  <span>{cue.answer}</span>
-                </div>
-                <div class="text-xs text-gray-500 mt-0.5">
-                  in {cue.support} of its clues · {Math.round(cue.precision * 100)}% precise corpus-wide ({cue.support}/{cue.total})
+                  <span>{card.answer}</span>
                 </div>
               </div>
               <button
-                onclick={() => toggleSuspend(cue)}
+                onclick={() => toggleSuspend(card)}
                 class="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:border-jeopardy-blue shrink-0 text-gray-700 transition-colors"
               >
-                {cue.suspended ? 'Unsuspend' : 'Suspend'}
+                {card.suspended ? 'Unsuspend' : 'Suspend'}
               </button>
             </div>
           {/each}
