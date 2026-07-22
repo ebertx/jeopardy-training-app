@@ -61,3 +61,49 @@ SELECT 'canary_welsh_poet_missing' AS check,
          SELECT 1 FROM pavlov_cues
          WHERE answer_norm = 'dylan thomas' AND cue_stem = 'welsh poet' AND status = 'active'
        ) THEN 0 ELSE 1 END AS fail_rows;
+
+-- H. expect 0: cards with empty or >3 phrases, or mismatched tier array.
+SELECT 'card_phrase_shape' AS check, count(*) AS fail_rows
+FROM pavlov_answers
+WHERE cardinality(phrases) = 0 OR cardinality(phrases) > 3
+   OR cardinality(phrases) <> cardinality(phrase_tiers);
+
+-- I. expect 0: cards whose answer has no active standard cue.
+SELECT 'card_without_standard_cue' AS check, count(*) AS fail_rows
+FROM pavlov_answers pa
+WHERE NOT EXISTS (
+  SELECT 1 FROM pavlov_cues pc
+  WHERE pc.answer_norm = pa.answer_norm
+    AND pc.status = 'active' AND pc.tier = 'standard'
+);
+
+-- J. expect 0: hint cues outside the hint band (below hint floor or at/above
+--    standard bar — those should have been tier 'standard').
+SELECT 'hint_out_of_band' AS check, count(*) AS fail_rows
+FROM pavlov_cues
+WHERE tier = 'hint' AND status = 'active' AND NOT (
+  (array_length(regexp_split_to_array(cue_stem, ' '), 1) = 2
+     AND support >= 3 AND prec >= 0.4 AND NOT (support >= 4 AND prec >= 0.5))
+  OR
+  (array_length(regexp_split_to_array(cue_stem, ' '), 1) = 1
+     AND support >= 5 AND prec >= 0.5 AND NOT (support >= 6 AND prec >= 0.6))
+);
+
+-- K. expect 0: card phrases leaking the answer; canary: Dylan Thomas card
+--    contains 'Welsh poet'.
+WITH words AS (
+  SELECT pa.id, w.word
+  FROM pavlov_answers pa,
+       regexp_split_to_table(lower(pa.answer_norm), '[^a-z0-9]+') AS w(word)
+  WHERE length(w.word) >= 4
+)
+SELECT 'card_phrase_leaks_answer' AS check, count(*) AS fail_rows
+FROM pavlov_answers pa, unnest(pa.phrases) AS p(phrase)
+WHERE p.phrase ~* ('\m' || regexp_replace(pa.answer_norm, '([.^$*+?()\[\]{}\\|])', '\\\1', 'g') || '\M')
+   OR EXISTS (SELECT 1 FROM words w WHERE w.id = pa.id AND p.phrase ~* ('\m' || w.word || '\M'));
+
+SELECT 'canary_dylan_thomas_card' AS check,
+       CASE WHEN EXISTS (
+         SELECT 1 FROM pavlov_answers
+         WHERE answer_norm = 'dylan thomas' AND 'Welsh poet' = ANY(phrases)
+       ) THEN 0 ELSE 1 END AS fail_rows;
