@@ -17,7 +17,11 @@
   let nextDueAt = $state<string | null>(null);
   let dueSoonCount = $state(0);
   let typed = $state('');
-  let result = $state<{ correct: boolean; answer: string; examples: any[] } | null>(null);
+  let result = $state<{
+    correct: boolean;
+    answer: string;
+    examples: Array<{ clue: string; category: string | null; airDate: string | null }>;
+  } | null>(null);
   let loading = $state(true);
   let submitting = $state(false);
   let error = $state('');
@@ -63,7 +67,7 @@
     }
   }
 
-  async function grade(rating: string) {
+  async function grade(rating: 'wrong' | 'got_it' | 'too_easy') {
     if (!card || submitting) return;
     submitting = true;
     try {
@@ -85,93 +89,95 @@
 
 <svelte:head><title>Pavlov Drill</title></svelte:head>
 
-<div class="max-w-2xl mx-auto px-4 py-8">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-2xl font-bold">Pavlov Drill</h1>
-    <div class="text-sm text-gray-400">
-      Due: {dueCount} · New left: {newRemaining}
-      {#if session.total > 0}
-        · Session: {session.correct}/{session.total}
-      {/if}
-    </div>
-  </div>
-  <p class="text-sm text-gray-400 mb-6">
-    Trigger keywords → answer. Train the reflex, not the clue.
-    <a href="/pavlov/list" class="text-jeopardy-gold hover:underline">Browse the list →</a>
-  </p>
-
-  {#if error}
-    <div class="mb-4 p-3 rounded bg-red-900/40 text-red-300 text-sm">{error}</div>
-  {/if}
-
-  {#if loading}
-    <p class="text-gray-400">Loading…</p>
-  {:else if done}
-    <div class="p-6 rounded-lg border border-gray-700 text-center">
-      <p class="text-lg font-medium mb-2">Done for now 🎉</p>
-      {#if dueSoonCount > 0}
-        <p class="text-sm text-gray-400">{dueSoonCount} card{dueSoonCount === 1 ? '' : 's'} due within the hour.</p>
-      {:else if nextDueAt}
-        <p class="text-sm text-gray-400">Next card due {new Date(nextDueAt).toLocaleString()}.</p>
-      {:else}
-        <p class="text-sm text-gray-400">No cards due. Generate or unsuspend cues from the list page.</p>
-      {/if}
-    </div>
-  {:else if card}
-    <div class="p-6 rounded-lg border border-gray-700">
-      <div class="flex items-center gap-2 mb-4">
-        <span class="px-2 py-0.5 rounded text-xs font-medium bg-jeopardy-gold/20 text-jeopardy-gold">
-          {card.category}
-        </span>
-        {#if isNew}<span class="px-2 py-0.5 rounded text-xs bg-blue-900/50 text-blue-300">new</span>{/if}
+<div class="min-h-screen bg-gray-50 py-6 sm:py-8 px-4">
+  <div class="max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-xl sm:text-2xl font-bold text-jeopardy-blue">Pavlov Drill</h1>
+      <div class="text-sm font-medium text-gray-600">
+        Due: {dueCount} · New left: {newRemaining}
+        {#if session.total > 0}
+          · Session: {session.correct}/{session.total}
+        {/if}
       </div>
+    </div>
+    <p class="text-sm text-gray-500 mb-6">
+      Trigger keywords → answer. Train the reflex, not the clue.
+      <a href="/pavlov/list" class="text-jeopardy-blue hover:underline">Browse the list →</a>
+    </p>
 
-      <div class="flex flex-wrap gap-2 mb-6">
-        {#each card.cuePhrases as phrase}
-          <span class="px-3 py-1.5 rounded-full border border-gray-600 text-lg">{phrase}</span>
-        {/each}
+    {#if error}
+      <div class="mb-4 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>
+    {/if}
+
+    {#if loading}
+      <p class="text-gray-500">Loading…</p>
+    {:else if done}
+      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-sm text-center">
+        <p class="text-lg font-medium mb-2 text-gray-900">Done for now 🎉</p>
+        {#if dueSoonCount > 0}
+          <p class="text-sm text-gray-500">{dueSoonCount} card{dueSoonCount === 1 ? '' : 's'} due within the hour.</p>
+        {:else if nextDueAt}
+          <p class="text-sm text-gray-500">Next card due {new Date(nextDueAt).toLocaleString()}.</p>
+        {:else}
+          <p class="text-sm text-gray-500">No cards due. Generate or unsuspend cues from the list page.</p>
+        {/if}
       </div>
-
-      {#if !result}
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          type="text"
-          bind:value={typed}
-          onkeydown={onKeydown}
-          autofocus
-          placeholder="Who/what is…?"
-          class="w-full px-3 py-2 rounded bg-gray-800 border border-gray-600 focus:border-jeopardy-gold outline-none"
-        />
-        <button
-          onclick={check}
-          disabled={submitting}
-          class="mt-3 px-4 py-2 rounded bg-jeopardy-gold text-black font-medium disabled:opacity-50"
-        >
-          Check
-        </button>
-      {:else}
-        <div class="mb-4 p-3 rounded {result.correct ? 'bg-green-900/40 text-green-300' : 'bg-red-900/40 text-red-300'}">
-          {result.correct ? 'Correct:' : 'Answer:'} <span class="font-semibold">{result.answer}</span>
+    {:else if card}
+      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div class="flex items-center gap-2 mb-4">
+          <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+            {card.category}
+          </span>
+          {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
         </div>
-        {#if result.examples.length > 0}
-          <div class="mb-4 text-sm text-gray-400 space-y-2">
-            {#each result.examples as ex}
-              <p>"{ex.clue}" <span class="text-gray-500">({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</span></p>
-            {/each}
+
+        <div class="flex flex-wrap gap-2 mb-6">
+          {#each card.cuePhrases as phrase}
+            <span class="px-3 py-1.5 rounded-full border border-gray-300 text-lg text-gray-900">{phrase}</span>
+          {/each}
+        </div>
+
+        {#if !result}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            type="text"
+            bind:value={typed}
+            onkeydown={onKeydown}
+            autofocus
+            placeholder="Who/what is…?"
+            class="w-full px-3 py-2 rounded-lg bg-white border border-gray-300 text-gray-900 focus:border-jeopardy-blue focus:outline-none focus:ring-1 focus:ring-jeopardy-blue"
+          />
+          <button
+            onclick={check}
+            disabled={submitting}
+            class="mt-3 px-4 py-2 rounded-lg bg-jeopardy-blue text-white font-medium hover:bg-blue-800 transition-colors disabled:opacity-50"
+          >
+            Check
+          </button>
+        {:else}
+          <div class="mb-4 p-3 rounded-lg {result.correct ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+            {result.correct ? 'Correct:' : 'Answer:'} <span class="font-semibold">{result.answer}</span>
+          </div>
+          {#if result.examples.length > 0}
+            <div class="mb-4 text-sm text-gray-600 space-y-2">
+              {#each result.examples as ex}
+                <p>"{ex.clue}" <span class="text-gray-500">({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</span></p>
+              {/each}
+            </div>
+          {/if}
+          <div class="flex gap-2">
+            {#if result.correct}
+              <button onclick={() => grade('got_it')} disabled={submitting}
+                class="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold disabled:opacity-50 transition-colors">Got it</button>
+              <button onclick={() => grade('too_easy')} disabled={submitting}
+                class="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 transition-colors">Too easy</button>
+            {:else}
+              <button onclick={() => grade('wrong')} disabled={submitting}
+                class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-50 transition-colors">Continue</button>
+            {/if}
           </div>
         {/if}
-        <div class="flex gap-2">
-          {#if result.correct}
-            <button onclick={() => grade('got_it')} disabled={submitting}
-              class="px-4 py-2 rounded bg-green-700 font-medium disabled:opacity-50">Got it</button>
-            <button onclick={() => grade('too_easy')} disabled={submitting}
-              class="px-4 py-2 rounded bg-gray-700 font-medium disabled:opacity-50">Too easy</button>
-          {:else}
-            <button onclick={() => grade('wrong')} disabled={submitting}
-              class="px-4 py-2 rounded bg-red-700 font-medium disabled:opacity-50">Continue</button>
-          {/if}
-        </div>
-      {/if}
-    </div>
-  {/if}
+      </div>
+    {/if}
+  </div>
 </div>
