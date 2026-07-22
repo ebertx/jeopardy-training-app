@@ -1,61 +1,5 @@
-//! Pavlov cue mining: seat planning, TF-IDF term filtering, and LLM polish
+//! Pavlov cue mining: candidate pruning and LLM surface-form rendering
 //! (docs/superpowers/specs/2026-07-21-pavlov-cues-design.md).
-
-use crate::blend::{sampling_kind, split_seats, SamplingKind, TARGET_WEIGHTS};
-use crate::routes::mock_test::apportion;
-
-pub const TOTAL_SEATS: i64 = 1500;
-pub const MIN_FREQ: i32 = 5;
-
-#[derive(Debug, Clone)]
-pub struct SeatPlan {
-    pub category: String,
-    pub canon: i64,
-    pub recency: i64,
-}
-
-pub fn seat_plan(total: i64) -> Vec<SeatPlan> {
-    let dist: Vec<(String, i64)> = TARGET_WEIGHTS
-        .iter()
-        .map(|(c, w)| (c.to_string(), *w))
-        .collect();
-    apportion(&dist, total)
-        .into_iter()
-        .map(|(category, seats)| match sampling_kind(&category) {
-            SamplingKind::Canon => SeatPlan { category, canon: seats, recency: 0 },
-            SamplingKind::Recency => SeatPlan { category, canon: 0, recency: seats },
-            SamplingKind::Split => {
-                let (canon, recency) = split_seats(seats);
-                SeatPlan { category, canon, recency }
-            }
-        })
-        .collect()
-}
-
-pub const POLISH_MODEL: &str = "gpt-4o";
-
-/// Drop mined terms that are just stems/variants of the answer itself (the SQL
-/// stage already removed exact lexeme matches; this catches near-variants).
-/// Rule: a term is self-referential when it shares a common prefix of ≥ 4
-/// chars with an answer word AND one is a prefix of the other (case-insensitive).
-pub fn filter_self_terms(answer: &str, terms: Vec<String>) -> Vec<String> {
-    let answer_words: Vec<String> = answer
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 4)
-        .map(|w| w.to_string())
-        .collect();
-    terms
-        .into_iter()
-        .filter(|t| {
-            let tl = t.to_lowercase();
-            !answer_words.iter().any(|w| {
-                (tl.starts_with(w.as_str()) || w.starts_with(tl.as_str()))
-                    && tl.len().min(w.len()) >= 4
-            })
-        })
-        .collect()
-}
 
 /// True when a cue phrase gives the answer away: the phrase contains the
 /// whole answer (article-stripped, as a contiguous word sequence) or any
@@ -88,54 +32,106 @@ pub fn phrase_leaks_answer(answer: &str, phrase: &str) -> bool {
     whole || word
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueCandidate {
+    pub answer_norm: String,
+    pub gram: String,
+    pub n: i16,
+    pub support: i64,
+    pub total: i64,
+    pub prec: f64,
+}
+
+/// Redundancy pruning within each answer: when one gram's token set is a
+/// subset of another's (e.g. "wood" vs "milk wood"), keep the higher score
+/// (support * prec); on a tie keep the gram with more tokens (more specific).
+/// Grams of different answers never prune each other.
+pub fn prune_redundant(cands: Vec<CueCandidate>) -> Vec<CueCandidate> {
+    use std::collections::HashSet;
+    let toks: Vec<HashSet<&str>> = cands
+        .iter()
+        .map(|c| c.gram.split(' ').collect())
+        .collect();
+    let score = |c: &CueCandidate| c.support as f64 * c.prec;
+    let mut dropped = vec![false; cands.len()];
+    for i in 0..cands.len() {
+        for j in 0..cands.len() {
+            if i == j || dropped[i] || dropped[j] {
+                continue;
+            }
+            if cands[i].answer_norm != cands[j].answer_norm {
+                continue;
+            }
+            if !toks[i].is_subset(&toks[j]) && !toks[j].is_subset(&toks[i]) {
+                continue;
+            }
+            // i and j are token-related: drop the weaker.
+            let (si, sj) = (score(&cands[i]), score(&cands[j]));
+            let drop_i = if si != sj {
+                si < sj
+            } else {
+                toks[i].len() < toks[j].len()
+            };
+            if drop_i {
+                dropped[i] = true;
+            } else {
+                dropped[j] = true;
+            }
+        }
+    }
+    cands
+        .into_iter()
+        .zip(dropped)
+        .filter(|(_, d)| !d)
+        .map(|(c, _)| c)
+        .collect()
+}
+
 #[derive(Debug, Clone)]
-pub struct PolishInput {
+pub struct RenderInput {
     pub answer: String,
-    pub terms: Vec<String>,
+    pub gram: String,
     pub sample_clues: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PolishOutcome {
+pub struct RenderOutcome {
     pub answer: String,
+    pub gram: String,
     pub keep: bool,
-    pub phrases: Vec<String>,
+    pub display: String,
 }
 
-/// (system, user) prompts for one polish batch. The system prompt pins the
-/// JSON shape; the user prompt carries the mined evidence per answer.
-pub fn polish_prompts(batch: &[PolishInput]) -> (String, String) {
-    let system = "You turn mined Jeopardy! writer-habit data into study flashcards. \
-For each answer you receive its most distinctive clue keywords (stemmed) and sample real clues. \
-Write 2-4 short human-readable cue phrases per answer — the trigger associations a contestant \
-should learn (e.g. for Solomon: \"wise king\", \"Ecclesiastes ascribed to\"). \
-Every phrase must be grounded in the given keywords or sample clues; never invent associations. \
-A cue phrase must NEVER contain the answer itself or any distinctive word of the answer — \
-it must trigger recall of the answer, not reveal it. \
-Set keep=false when the keywords are too generic or self-referential to make useful cues. \
+/// (system, user) prompts for one render batch. Cosmetic-only contract: the
+/// LLM restores a stemmed phrase to its natural surface form, nothing more.
+pub fn render_prompts(batch: &[RenderInput]) -> (String, String) {
+    let system = "You restore stemmed Jeopardy! clue phrases to their natural surface form. \
+For each item you receive a stemmed phrase, the answer it cues, and real clues containing \
+the phrase. Return the phrase as it naturally appears in the clues \
+(e.g. 'welsh poet' -> 'Welsh poet', 'go gentl' -> 'go gentle'). Render ONLY the given \
+phrase — do not add other words or information, and NEVER include the answer or any word \
+of the answer in the rendering. Set keep=false only when no natural rendering exists. \
 Respond with JSON only: {\"results\": [{\"answer\": string (echoed verbatim), \
-\"keep\": boolean, \"cue_phrases\": [string]}]}"
+\"gram\": string (echoed verbatim), \"keep\": boolean, \"display\": string}]}"
         .to_string();
-
     let items: Vec<serde_json::Value> = batch
         .iter()
         .map(|b| {
             serde_json::json!({
                 "answer": b.answer,
-                "mined_keywords": b.terms,
+                "gram": b.gram,
                 "sample_clues": b.sample_clues,
             })
         })
         .collect();
-    let user = serde_json::to_string_pretty(&serde_json::json!({ "answers": items }))
+    let user = serde_json::to_string_pretty(&serde_json::json!({ "phrases": items }))
         .expect("serializable");
     (system, user)
 }
 
-/// Lenient parse: items without an answer string are skipped; phrases are
-/// trimmed, de-blanked, stripped of answer-leaking phrases, capped at 4;
-/// keep with < 2 surviving phrases demotes to dropped.
-pub fn parse_polish_response(v: &serde_json::Value) -> Vec<PolishOutcome> {
+/// Lenient parse of the render response: items missing answer or gram are
+/// skipped; a blank display or one that leaks the answer demotes to dropped.
+pub fn parse_render_response(v: &serde_json::Value) -> Vec<RenderOutcome> {
     let Some(results) = v.get("results").and_then(|r| r.as_array()) else {
         return vec![];
     };
@@ -143,25 +139,20 @@ pub fn parse_polish_response(v: &serde_json::Value) -> Vec<PolishOutcome> {
         .iter()
         .filter_map(|item| {
             let answer = item.get("answer")?.as_str()?.trim().to_string();
-            if answer.is_empty() {
+            let gram = item.get("gram")?.as_str()?.trim().to_string();
+            if answer.is_empty() || gram.is_empty() {
                 return None;
             }
-            let mut phrases: Vec<String> = item
-                .get("cue_phrases")
-                .and_then(|p| p.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|s| s.as_str())
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .filter(|s| !phrase_leaks_answer(&answer, s))
-                        .collect()
-                })
-                .unwrap_or_default();
-            phrases.truncate(4);
+            let display = item
+                .get("display")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let keep = item.get("keep").and_then(|k| k.as_bool()).unwrap_or(true)
-                && phrases.len() >= 2;
-            Some(PolishOutcome { answer, keep, phrases })
+                && !display.is_empty()
+                && !phrase_leaks_answer(&answer, &display);
+            Some(RenderOutcome { answer, gram, keep, display })
         })
         .collect()
 }
@@ -186,77 +177,32 @@ struct Candidate {
 
 /// Top unmined answers for one category. `recency=false` ranks by answer_freq;
 /// `recency=true` by summed 6-year-half-life decay (mock-test constant).
+///
+/// STUB (Task 4): v1 body pruned along with `MIN_FREQ`; Task 5 replaces this
+/// stage's SQL wholesale, so it is left as a placeholder rather than patched.
+#[allow(unused_variables, dead_code)]
 async fn select_candidates(
     state: &Arc<AppState>,
     category: &str,
     seats: i64,
     recency: bool,
 ) -> Result<Vec<Candidate>, AppError> {
-    let order = if recency { "recency_wt" } else { "freq" };
-    let sql = format!(
-        "SELECT norm, display, freq FROM (
-           SELECT {NORM_EXPR} AS norm,
-                  mode() WITHIN GROUP (ORDER BY jq.question) AS display,
-                  max(jq.answer_freq) AS freq,
-                  sum(exp(-0.11552 * EXTRACT(EPOCH FROM (now() - jq.air_date)) / 31557600.0)) AS recency_wt
-           FROM jeopardy_questions jq
-           WHERE jq.archived = false AND jq.question IS NOT NULL
-             AND jq.air_date IS NOT NULL AND jq.classifier_category = $1
-           GROUP BY 1
-         ) t
-         WHERE freq >= $2 AND norm NOT IN (SELECT answer_norm FROM pavlov_cues)
-         ORDER BY {order} DESC
-         LIMIT $3"
-    );
-    Ok(sqlx::query_as::<_, Candidate>(&sql)
-        .bind(category)
-        .bind(MIN_FREQ)
-        .bind(seats)
-        .fetch_all(&state.pool)
-        .await?)
+    todo!("replaced wholesale in Task 5")
 }
 
 /// Distinctive clue lexemes for one answer: TF within the answer's clues ×
 /// log-inverse document frequency corpus-wide, minus the answer's own lexemes.
+///
+/// STUB (Task 4): v1 body called the now-deleted `filter_self_terms`; Task 5
+/// replaces this stage's SQL wholesale, so it is left as a placeholder.
+#[allow(unused_variables, dead_code)]
 async fn mine_terms(
     state: &Arc<AppState>,
     norm: &str,
     display: &str,
     total_docs: f64,
 ) -> Result<Vec<String>, AppError> {
-    let sql = format!(
-        "WITH clues AS (
-           SELECT jq.search_tsv
-           FROM jeopardy_questions jq
-           WHERE jq.archived = false AND jq.question IS NOT NULL
-             AND {NORM_EXPR} = $1
-         ),
-         lex AS (
-           SELECT u.lexeme AS word, count(*)::float8 AS tf
-           FROM clues, unnest(clues.search_tsv) AS u(lexeme, positions, weights)
-           GROUP BY 1
-         )
-         SELECT l.word
-         FROM lex l
-         JOIN pavlov_term_df d ON d.word = l.word
-         WHERE l.word NOT IN (
-           SELECT a.lexeme
-           FROM unnest(to_tsvector('english', $2)) AS a(lexeme, positions, weights)
-         )
-         ORDER BY l.tf * ln($3 / GREATEST(d.ndoc, 1)) DESC
-         LIMIT $4"
-    );
-    let rows: Vec<(String,)> = sqlx::query_as(&sql)
-        .bind(norm)
-        .bind(display)
-        .bind(total_docs)
-        .bind(TERMS_RAW_LIMIT)
-        .fetch_all(&state.pool)
-        .await?;
-    let mut terms =
-        filter_self_terms(display, rows.into_iter().map(|(w,)| w).collect());
-    terms.truncate(TERMS_KEPT);
-    Ok(terms)
+    todo!("replaced wholesale in Task 5")
 }
 
 /// The 3 most recent clue ids for an answer (reveal examples).
@@ -272,134 +218,32 @@ async fn example_ids(state: &Arc<AppState>, norm: &str) -> Result<Vec<i32>, AppE
 }
 
 /// Stage A: fill every category's seats with mined 'pending' rows.
+///
+/// STUB (Task 4): v1 body depended on the removed `seat_plan`/`TOTAL_SEATS`;
+/// Task 5 replaces this stage wholesale.
+#[allow(unused_variables, dead_code)]
 async fn mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
-    let total_docs: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM jeopardy_questions WHERE archived = false")
-            .fetch_one(&state.pool)
-            .await?;
-    for plan in seat_plan(TOTAL_SEATS) {
-        for (seats, recency) in [(plan.canon, false), (plan.recency, true)] {
-            if seats <= 0 {
-                continue;
-            }
-            // Deficit-aware: seats minus what previous runs already mined here.
-            let have: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM pavlov_cues WHERE meta_category = $1",
-            )
-            .bind(&plan.category)
-            .fetch_one(&state.pool)
-            .await?;
-            let want = (plan.canon + plan.recency - have).min(seats);
-            if want <= 0 {
-                continue;
-            }
-            let candidates = select_candidates(state, &plan.category, want, recency).await?;
-            for c in candidates {
-                let terms = mine_terms(state, &c.norm, &c.display, total_docs as f64).await?;
-                if terms.is_empty() {
-                    continue;
-                }
-                let examples = example_ids(state, &c.norm).await?;
-                sqlx::query(
-                    "INSERT INTO pavlov_cues
-                       (answer, answer_norm, meta_category, mined_terms, example_clue_ids, answer_freq)
-                     VALUES ($1, $2, $3, $4, $5, $6)
-                     ON CONFLICT (answer_norm) DO NOTHING",
-                )
-                .bind(&c.display)
-                .bind(&c.norm)
-                .bind(&plan.category)
-                .bind(&terms)
-                .bind(&examples)
-                .bind(c.freq)
-                .execute(&state.pool)
-                .await?;
-            }
-        }
-    }
-    Ok(())
+    todo!("replaced wholesale in Task 5")
 }
 
 /// Stage B: polish pending rows in batches; each batch is upserted before the
 /// next call, so an interrupted run resumes where it left off.
+///
+/// STUB (Task 4): v1 body depended on the removed `PolishInput`/
+/// `polish_prompts`/`parse_polish_response`; Task 5 replaces this stage
+/// wholesale with the render-based contract.
+#[allow(unused_variables, dead_code)]
 async fn polish_stage(state: &Arc<AppState>) -> Result<(), AppError> {
-    loop {
-        let batch: Vec<(i32, String, Vec<String>, Vec<i32>)> = sqlx::query_as(
-            "SELECT id, answer, mined_terms, example_clue_ids
-             FROM pavlov_cues WHERE status = 'pending' ORDER BY id LIMIT $1",
-        )
-        .bind(POLISH_BATCH)
-        .fetch_all(&state.pool)
-        .await?;
-        if batch.is_empty() {
-            return Ok(());
-        }
-
-        let mut inputs = Vec::with_capacity(batch.len());
-        for (_, answer, terms, ex_ids) in &batch {
-            let clues: Vec<(String,)> = sqlx::query_as(
-                "SELECT coalesce(answer, '') FROM jeopardy_questions WHERE id = ANY($1) LIMIT 2",
-            )
-            .bind(&ex_ids[..])
-            .fetch_all(&state.pool)
-            .await?;
-            inputs.push(PolishInput {
-                answer: answer.clone(),
-                terms: terms.clone(),
-                sample_clues: clues.into_iter().map(|(c,)| c).collect(),
-            });
-        }
-
-        let (system, user) = polish_prompts(&inputs);
-        let response = chat_json_with_model(state, &system, &user).await?;
-        let outcomes = parse_polish_response(&response);
-
-        // Match outcomes back to batch rows by lowercased answer.
-        let mut updated = 0;
-        for out in &outcomes {
-            let key = out.answer.to_lowercase();
-            let Some((id, ..)) = batch
-                .iter()
-                .find(|(_, a, ..)| a.to_lowercase() == key)
-            else {
-                continue;
-            };
-            let status = if out.keep { "active" } else { "dropped" };
-            sqlx::query(
-                "UPDATE pavlov_cues SET status = $2, cue_phrases = $3, model = $4
-                 WHERE id = $1 AND status = 'pending'",
-            )
-            .bind(id)
-            .bind(status)
-            .bind(&out.phrases)
-            .bind(POLISH_MODEL)
-            .execute(&state.pool)
-            .await?;
-            updated += 1;
-        }
-        if updated == 0 {
-            // LLM echoed nothing usable for this batch — drop it rather than
-            // spin forever refetching the same pending rows.
-            let ids: Vec<i32> = batch.iter().map(|(id, ..)| *id).collect();
-            sqlx::query(
-                "UPDATE pavlov_cues SET status = 'dropped', model = $2
-                 WHERE id = ANY($1) AND status = 'pending'",
-            )
-            .bind(&ids)
-            .bind(POLISH_MODEL)
-            .execute(&state.pool)
-            .await?;
-            tracing::warn!("pavlov polish: batch of {} unmatched, dropped", ids.len());
-        }
-    }
+    todo!("replaced wholesale in Task 5")
 }
 
+#[allow(dead_code)]
 async fn chat_json_with_model(
     state: &Arc<AppState>,
     system: &str,
     user: &str,
 ) -> Result<serde_json::Value, AppError> {
-    crate::openai::chat_json(&state.config.openai_api_key, POLISH_MODEL, system, user, 0.3).await
+    crate::openai::chat_json(&state.config.openai_api_key, "gpt-4o", system, user, 0.3).await
 }
 
 /// Full generation run: mine then polish. Both stages are idempotent/resumable.
@@ -411,115 +255,6 @@ pub async fn run_generation(state: &Arc<AppState>) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn plan_for(cat: &str, plan: &[SeatPlan]) -> (i64, i64) {
-        let p = plan.iter().find(|p| p.category == cat).expect("category present");
-        (p.canon, p.recency)
-    }
-
-    #[test]
-    fn seat_plan_covers_all_categories_and_sums_to_total() {
-        let plan = seat_plan(1500);
-        assert_eq!(plan.len(), TARGET_WEIGHTS.len());
-        let sum: i64 = plan.iter().map(|p| p.canon + p.recency).sum();
-        assert_eq!(sum, 1500);
-    }
-
-    #[test]
-    fn canon_categories_get_only_canon_seats() {
-        let plan = seat_plan(1500);
-        // Literature & Language is 20/100 of 1500 = 300, all canon.
-        assert_eq!(plan_for("Literature & Language", &plan), (300, 0));
-    }
-
-    #[test]
-    fn recency_categories_get_only_recency_seats() {
-        let plan = seat_plan(1500);
-        // Film, TV & Pop Culture is 10/100 of 1500 = 150, all recency.
-        assert_eq!(plan_for("Film, TV & Pop Culture", &plan), (0, 150));
-    }
-
-    #[test]
-    fn music_splits_seats_with_canon_taking_the_odd_one() {
-        let plan = seat_plan(1500);
-        // Music & Performing Arts is 6/100 of 1500 = 90 → 45/45.
-        let (canon, recency) = plan_for("Music & Performing Arts", &plan);
-        assert_eq!(canon + recency, 90);
-        assert!(canon >= recency);
-        assert!(canon - recency <= 1);
-    }
-
-    #[test]
-    fn filter_self_terms_drops_stems_of_the_answer() {
-        let terms = vec![
-            "hemingway".to_string(), // shares ≥4-char prefix with answer word
-            "bell".to_string(),      // < 4 chars overlap requirement, kept
-            "spanish".to_string(),
-        ];
-        let kept = filter_self_terms("Ernest Hemingway", terms);
-        assert_eq!(kept, vec!["bell".to_string(), "spanish".to_string()]);
-    }
-
-    #[test]
-    fn filter_self_terms_is_case_insensitive_and_keeps_order() {
-        let kept = filter_self_terms(
-            "Solomon",
-            vec!["wise".into(), "SOLOMONS".into(), "king".into()],
-        );
-        assert_eq!(kept, vec!["wise".to_string(), "king".to_string()]);
-    }
-
-    #[test]
-    fn polish_prompts_mention_every_answer_and_demand_json() {
-        let batch = vec![PolishInput {
-            answer: "Solomon".into(),
-            terms: vec!["wise".into(), "king".into(), "ecclesiast".into()],
-            sample_clues: vec!["The book of Ecclesiastes is traditionally ascribed to this wise king".into()],
-        }];
-        let (system, user) = polish_prompts(&batch);
-        assert!(system.contains("JSON"));
-        assert!(user.contains("Solomon"));
-        assert!(user.contains("ecclesiast"));
-        assert!(user.contains("wise king")); // sample clue included
-    }
-
-    #[test]
-    fn parse_polish_response_accepts_wellformed_and_enforces_phrase_floor() {
-        let v = serde_json::json!({
-            "results": [
-                { "answer": "Solomon", "keep": true,
-                  "cue_phrases": ["wise king", "Ecclesiastes ascribed to", "Temple builder"] },
-                { "answer": "Junk", "keep": true, "cue_phrases": ["only one"] },
-                { "answer": "Generic", "keep": false, "cue_phrases": [] }
-            ]
-        });
-        let out = parse_polish_response(&v);
-        assert_eq!(out.len(), 3);
-        assert!(out[0].keep);
-        assert_eq!(out[0].phrases.len(), 3);
-        assert!(!out[1].keep, "keep with <2 phrases is demoted to dropped");
-        assert!(!out[2].keep);
-    }
-
-    #[test]
-    fn parse_polish_response_caps_phrases_at_four_and_skips_nameless_items() {
-        let v = serde_json::json!({
-            "results": [
-                { "keep": true, "cue_phrases": ["a", "b"] },
-                { "answer": "Nile", "keep": true,
-                  "cue_phrases": ["longest river", "Egypt", "Aswan", "Khartoum", "delta"] }
-            ]
-        });
-        let out = parse_polish_response(&v);
-        assert_eq!(out.len(), 1, "item without an answer string is skipped");
-        assert_eq!(out[0].phrases.len(), 4);
-    }
-
-    #[test]
-    fn parse_polish_response_of_garbage_is_empty() {
-        assert!(parse_polish_response(&serde_json::json!({"nope": 1})).is_empty());
-        assert!(parse_polish_response(&serde_json::json!("string")).is_empty());
-    }
 
     #[test]
     fn phrase_leaks_on_whole_answer_even_when_short() {
@@ -546,21 +281,90 @@ mod tests {
         assert!(!phrase_leaks_answer("a pearl", "June birthstone"));
     }
 
+    fn cand(answer: &str, gram: &str, n: i16, support: i64, total: i64) -> CueCandidate {
+        CueCandidate {
+            answer_norm: answer.to_string(),
+            gram: gram.to_string(),
+            n,
+            support,
+            total,
+            prec: support as f64 / total as f64,
+        }
+    }
+
     #[test]
-    fn parse_polish_response_strips_leaking_phrases_and_demotes_below_floor() {
+    fn prune_drops_token_subset_with_lower_score() {
+        // "wood" (7/12 = 4.08 score) is a token-subset of "milk wood"
+        // (6/7 = 5.14 score) for the same answer -> keep "milk wood".
+        let out = prune_redundant(vec![
+            cand("dylan thomas", "milk wood", 2, 6, 7),
+            cand("dylan thomas", "wood", 1, 7, 12),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].gram, "milk wood");
+    }
+
+    #[test]
+    fn prune_keeps_more_specific_gram_on_score_tie() {
+        let out = prune_redundant(vec![
+            cand("solomon", "wise", 1, 6, 12),
+            cand("solomon", "wise king", 2, 6, 12),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].gram, "wise king");
+    }
+
+    #[test]
+    fn prune_keeps_unrelated_grams_and_other_answers() {
+        let out = prune_redundant(vec![
+            cand("dylan thomas", "welsh poet", 2, 19, 25),
+            cand("dylan thomas", "fern hill", 2, 6, 6),
+            cand("solomon", "wise king", 2, 15, 17),
+            // same-token unigram but for a DIFFERENT answer: not pruned
+            cand("robert frost", "poet", 1, 9, 14),
+        ]);
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn render_prompts_carry_gram_answer_and_clues_and_demand_json() {
+        let batch = vec![RenderInput {
+            answer: "Dylan Thomas".into(),
+            gram: "welsh poet".into(),
+            sample_clues: vec!["This Welsh poet wrote 'Fern Hill'".into()],
+        }];
+        let (system, user) = render_prompts(&batch);
+        assert!(system.contains("JSON"));
+        assert!(system.to_lowercase().contains("never include the answer"));
+        assert!(user.contains("welsh poet"));
+        assert!(user.contains("Dylan Thomas"));
+        assert!(user.contains("Fern Hill"));
+    }
+
+    #[test]
+    fn parse_render_accepts_wellformed_and_drops_leaky_or_empty() {
         let v = serde_json::json!({
             "results": [
-                { "answer": "13", "keep": true,
-                  "cue_phrases": ["13 stripes on flag", "unlucky number", "baker's dozen"] },
-                { "answer": "Gibraltar", "keep": true,
-                  "cue_phrases": ["Rock of Gibraltar", "strait to Africa"] }
+                { "answer": "Dylan Thomas", "gram": "welsh poet",
+                  "keep": true, "display": "Welsh poet" },
+                { "answer": "Dylan Thomas", "gram": "go gentl",
+                  "keep": true, "display": "Dylan's go gentle" }, // leaks answer word
+                { "answer": "Solomon", "gram": "wise king",
+                  "keep": true, "display": "  " },                // empty render
+                { "gram": "orphan", "keep": true, "display": "x" } // no answer: skipped
             ]
         });
-        let out = parse_polish_response(&v);
-        assert_eq!(out[0].phrases, vec!["unlucky number".to_string(), "baker's dozen".to_string()]);
+        let out = parse_render_response(&v);
+        assert_eq!(out.len(), 3);
         assert!(out[0].keep);
-        // Gibraltar drops to one clean phrase -> demoted.
-        assert_eq!(out[1].phrases, vec!["strait to Africa".to_string()]);
-        assert!(!out[1].keep);
+        assert_eq!(out[0].display, "Welsh poet");
+        assert!(!out[1].keep, "display containing an answer word is demoted");
+        assert!(!out[2].keep, "blank display is demoted");
+    }
+
+    #[test]
+    fn parse_render_of_garbage_is_empty() {
+        assert!(parse_render_response(&serde_json::json!({"nope": 1})).is_empty());
+        assert!(parse_render_response(&serde_json::json!("string")).is_empty());
     }
 }
