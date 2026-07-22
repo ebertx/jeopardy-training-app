@@ -109,6 +109,37 @@ pub struct RenderOutcome {
     pub gram: String,
     pub keep: bool,
     pub display: String,
+    /// Optional grounded completion: `display` extended with a few adjacent
+    /// words copied verbatim from a sample clue. `None` when no useful
+    /// completion exists or the model's completion leaked the answer.
+    pub extended: Option<String>,
+}
+
+/// True when the punctuation-normalized `display` phrase (lowercased,
+/// non-alphanumeric runs collapsed to a single space, trimmed) appears as a
+/// substring of at least one similarly-normalized clue. Used to confirm an
+/// LLM-proposed "extended" completion was actually copied from the clues
+/// rather than invented.
+pub fn display_grounded(display: &str, clues: &[String]) -> bool {
+    fn norm(s: &str) -> String {
+        let mut out = String::new();
+        let mut prev_space = false;
+        for c in s.to_lowercase().chars() {
+            if c.is_alphanumeric() {
+                out.push(c);
+                prev_space = false;
+            } else if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        }
+        out.trim().to_string()
+    }
+    let needle = norm(display);
+    if needle.is_empty() {
+        return false;
+    }
+    clues.iter().any(|c| norm(c).contains(&needle))
 }
 
 /// (system, user) prompts for one render batch. Cosmetic-only contract: the
@@ -120,8 +151,15 @@ the phrase. Return the phrase as it naturally appears in the clues \
 (e.g. 'welsh poet' -> 'Welsh poet', 'go gentl' -> 'go gentle'). Render ONLY the given \
 phrase — do not add other words or information, and NEVER include the answer or any word \
 of the answer in the rendering. Set keep=false only when no natural rendering exists. \
+Also return a second field \"extended\": optionally, the phrase completed with a few \
+adjacent words exactly as it appears in one of the provided sample clues (e.g. gram \
+'straight super' appearing in clues as 'lost 4 straight Super Bowls' -> extended \
+'lost 4 straight Super Bowls'). The extended text must be copied verbatim from a clue, \
+must contain the phrase, must stay short (<= 6 words), and must NEVER include the answer \
+or any word of the answer; set it to null when no useful completion exists. \
 Respond with JSON only: {\"results\": [{\"answer\": string (echoed verbatim), \
-\"gram\": string (echoed verbatim), \"keep\": boolean, \"display\": string}]}"
+\"gram\": string (echoed verbatim), \"keep\": boolean, \"display\": string, \
+\"extended\": string|null}]}"
         .to_string();
     let items: Vec<serde_json::Value> = batch
         .iter()
@@ -165,7 +203,23 @@ pub fn parse_render_response(v: &serde_json::Value) -> Vec<RenderOutcome> {
             let keep = item.get("keep").and_then(|k| k.as_bool()).unwrap_or(true)
                 && !display.is_empty()
                 && !phrase_leaks_answer(&answer, &display);
-            Some(RenderOutcome { answer, gram, keep, display })
+
+            let extended = item.get("extended").and_then(|d| d.as_str()).and_then(|raw| {
+                let mut e = raw
+                    .trim()
+                    .trim_matches(['"', '\'', '\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}'])
+                    .to_string();
+                if e.matches('"').count() % 2 == 1 {
+                    e = e.replace('"', "");
+                }
+                if e.is_empty() || phrase_leaks_answer(&answer, &e) {
+                    None
+                } else {
+                    Some(e)
+                }
+            });
+
+            Some(RenderOutcome { answer, gram, keep, display, extended })
         })
         .collect()
 }
@@ -514,6 +568,16 @@ async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
             else {
                 continue;
             };
+            let stored_display = match &out.extended {
+                Some(ext) => {
+                    let grounded = inputs
+                        .iter()
+                        .find(|inp| (inp.answer.to_lowercase(), inp.gram.as_str()) == key)
+                        .is_some_and(|inp| display_grounded(ext, &inp.sample_clues));
+                    if grounded { ext.clone() } else { out.display.clone() }
+                }
+                None => out.display.clone(),
+            };
             let status = if out.keep { "active" } else { "dropped" };
             sqlx::query(
                 "UPDATE pavlov_cues SET status = $2, cue_display = $3, model = $4
@@ -521,7 +585,7 @@ async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
             )
             .bind(id)
             .bind(status)
-            .bind(&out.display)
+            .bind(&stored_display)
             .bind(POLISH_MODEL)
             .execute(&state.pool)
             .await?;
@@ -669,6 +733,12 @@ pub struct PhraseRow {
 }
 
 /// Standard phrases before hints, score desc within tier, capped at 3.
+///
+/// After sorting and before the cap, phrases whose normalized token set
+/// overlaps too heavily with an earlier-kept phrase are dropped greedily —
+/// this catches same-fact duplicates like "straight Super Bowl" alongside
+/// "Super Bowl appearances" (Jaccard 0.5), keeping only the stronger of the
+/// pair.
 pub fn assemble_phrases(mut rows: Vec<PhraseRow>) -> Vec<PhraseRow> {
     rows.sort_by(|a, b| {
         let ta = (a.tier != "standard") as u8;
@@ -676,8 +746,29 @@ pub fn assemble_phrases(mut rows: Vec<PhraseRow>) -> Vec<PhraseRow> {
         ta.cmp(&tb)
             .then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
     });
-    rows.truncate(3);
-    rows
+
+    let mut kept: Vec<PhraseRow> = Vec::new();
+    let mut kept_toks: Vec<std::collections::HashSet<String>> = Vec::new();
+    for row in rows {
+        let toks = norm_tokens(&row.display);
+        let overlaps_kept = kept_toks.iter().any(|k| {
+            let inter = toks.intersection(k).count();
+            if inter == 0 {
+                return false;
+            }
+            let union = toks.union(k).count();
+            let jaccard = inter as f64 / union as f64;
+            jaccard >= 0.5 || toks.is_subset(k) || k.is_subset(&toks)
+        });
+        if overlaps_kept {
+            continue;
+        }
+        kept_toks.push(toks);
+        kept.push(row);
+    }
+
+    kept.truncate(3);
+    kept
 }
 
 #[cfg(test)]
@@ -879,5 +970,48 @@ mod tests {
     fn assemble_handles_fewer_than_three() {
         let out = assemble_phrases(vec![prow("only", "standard", 2.0)]);
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn assemble_drops_same_fact_overlap_keeping_best() {
+        let out = assemble_phrases(vec![
+            prow("straight Super Bowl", "standard", 4.15),
+            prow("Super Bowl appearances", "hint", 1.29), // Jaccard 2/4 = 0.5 with kept
+            prow("Marv Levy", "hint", 1.1),
+        ]);
+        let got: Vec<&str> = out.iter().map(|p| p.display.as_str()).collect();
+        assert_eq!(got, vec!["straight Super Bowl", "Marv Levy"]);
+    }
+
+    #[test]
+    fn assemble_keeps_low_overlap_phrases() {
+        let out = assemble_phrases(vec![
+            prow("Super Bowl III", "standard", 5.0),
+            prow("Joe Namath guarantee", "standard", 4.0), // no meaningful overlap
+        ]);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn parse_render_takes_extended_and_drops_leaky_extended_only() {
+        let v = serde_json::json!({
+            "results": [
+                { "answer": "Buffalo Bills", "gram": "straight super", "keep": true,
+                  "display": "straight Super Bowl", "extended": "lost 4 straight Super Bowls" },
+                { "answer": "Buffalo Bills", "gram": "bowl appear", "keep": true,
+                  "display": "Super Bowl appearances", "extended": "Bills' Super Bowl appearances" }
+            ]
+        });
+        let out = parse_render_response(&v);
+        assert_eq!(out[0].extended.as_deref(), Some("lost 4 straight Super Bowls"));
+        assert!(out[1].extended.is_none(), "extended leaking an answer word is nulled");
+        assert!(out[1].keep, "display itself is clean so the cue survives");
+    }
+
+    #[test]
+    fn display_grounded_normalizes_punctuation_and_case() {
+        let clues = vec!["This Buffalo team lost 4 straight Super Bowls".to_string()];
+        assert!(display_grounded("lost 4 straight super bowls", &clues));
+        assert!(!display_grounded("won 4 straight super bowls", &clues));
     }
 }

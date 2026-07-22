@@ -122,3 +122,18 @@ SELECT 'normalized_dup_pair' AS check, count(*) AS fail_rows
 FROM toks a JOIN toks b
   ON a.answer_norm = b.answer_norm AND a.id < b.id
   AND (a.tokset <@ b.tokset OR b.tokset <@ a.tokset);
+
+-- M. expect 0: card phrase pairs with normalized-token Jaccard >= 0.5
+--    (same-fact duplicates the assembly filter should have removed).
+WITH card_toks AS (
+  SELECT pa.id, p.ord,
+         (SELECT array_agg(DISTINCT w ORDER BY w)
+          FROM regexp_split_to_table(lower(regexp_replace(p.phrase,'[^a-zA-Z0-9]+',' ','g')),' ') AS w
+          WHERE w <> '') AS tokset
+  FROM pavlov_answers pa, unnest(pa.phrases) WITH ORDINALITY AS p(phrase, ord)
+)
+SELECT 'card_same_fact_overlap' AS check, count(*) AS fail_rows
+FROM card_toks a JOIN card_toks b ON a.id = b.id AND a.ord < b.ord
+WHERE (SELECT count(*) FROM unnest(a.tokset) x WHERE x = ANY(b.tokset))::float
+      / (cardinality(a.tokset) + cardinality(b.tokset)
+         - (SELECT count(*) FROM unnest(a.tokset) x WHERE x = ANY(b.tokset))) >= 0.5;
