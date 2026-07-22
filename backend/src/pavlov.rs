@@ -334,8 +334,16 @@ async fn hint_mine_stage(state: &Arc<AppState>) -> Result<(), AppError> {
          SELECT s.answer_norm, s.gram, s.n, s.support::int4 AS support,
                 t.total::int4 AS total, (s.support::float8 / t.total)::float4 AS prec
          FROM sup s JOIN tot t USING (gram)
-         WHERE ((s.n = 2 AND s.support >= $3 AND s.support::float8 / t.total >= $4)
-             OR (s.n = 1 AND s.support >= $5 AND s.support::float8 / t.total >= $6))
+         -- The NOT (...) arms exclude grams that also clear the standard band
+         -- (mirrors BIGRAM_MIN_SUPPORT/BIGRAM_MIN_PREC/UNIGRAM_MIN_SUPPORT/
+         -- UNIGRAM_MIN_PREC: 4/0.5 bigram, 6/0.6 unigram). Such grams can
+         -- surface here when standard mining pruned them against a sibling
+         -- cue that later dropped during render; they belong in tier
+         -- 'standard', not 'hint', and are picked up by promotion instead.
+         WHERE ((s.n = 2 AND s.support >= $3 AND s.support::float8 / t.total >= $4
+                   AND NOT (s.support >= 4 AND s.support::float8 / t.total >= 0.5))
+             OR (s.n = 1 AND s.support >= $5 AND s.support::float8 / t.total >= $6
+                   AND NOT (s.support >= 6 AND s.support::float8 / t.total >= 0.6)))
            AND NOT EXISTS (SELECT 1 FROM pavlov_cues pc
                            WHERE pc.answer_norm = s.answer_norm AND pc.cue_stem = s.gram)";
     let rows: Vec<StandardCueRow> = sqlx::query_as(sql)

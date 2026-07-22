@@ -18,10 +18,11 @@ FROM pavlov_cues WHERE status = 'active' AND length(trim(cue_display)) = 0;
 SELECT 'duplicate_pair' AS check, count(*) AS fail_rows
 FROM (SELECT answer_norm, cue_stem FROM pavlov_cues GROUP BY 1, 2 HAVING count(*) > 1) d;
 
--- D. expect 0: active cues below the gate thresholds.
+-- D. expect 0: active standard-tier cues below the gate thresholds. (Hint-tier
+--    cues are legitimately below these thresholds; excluded here.)
 SELECT 'below_thresholds' AS check, count(*) AS fail_rows
 FROM pavlov_cues
-WHERE status = 'active' AND NOT (
+WHERE status = 'active' AND tier = 'standard' AND NOT (
   (array_length(regexp_split_to_array(cue_stem, ' '), 1) = 2 AND support >= 4 AND prec >= 0.5)
   OR
   (array_length(regexp_split_to_array(cue_stem, ' '), 1) = 1 AND support >= 6 AND prec >= 0.6)
