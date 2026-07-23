@@ -101,3 +101,18 @@ Nothing lands on main until the user approves the samples.
 
 Re-rendering existing standard cues; category-weighted scheduling; per-phrase
 SRS analytics (the per-pair experiment is over — SRS tracks answers).
+
+## Amendment 2026-07-23: allowance override + dashboard entry
+
+User-approved additions:
+
+- **Extra mode (allowance override):** `GET /api/pavlov/drill/next?extra=true`
+  skips the new-card allowance gate when picking new cards (due reviews still
+  serve first; grading creates real SRS state — explicitly chosen over a
+  no-SRS browse mode). The drill's done state reports `moreNewAvailable`
+  (unseen cards exist) and offers a "Keep going" button that enables the flag
+  for the rest of the page session; header appends "· extra mode".
+  `newRemaining` keeps reporting the true (un-overridden) value.
+- **Dashboard tile:** new lightweight `GET /api/pavlov/status` (authed)
+  returning `{dueCount, newRemaining, totalCards}`; dashboard shows a Pavlov
+  tile with those counts linking to `/pavlov`.
