@@ -41,7 +41,9 @@ pub fn compute_weights(stats: &[CategoryStat]) -> Vec<CategoryWeight> {
         .map(|s| {
             let smoothed = (s.correct as f64 + PRIOR_PSEUDO_COUNT * global_acc)
                 / (s.attempts as f64 + PRIOR_PSEUDO_COUNT);
-            (1.0 - smoothed).max(0.0)
+            // Weakness × Anytime Test share: attention follows expected test
+            // points, not raw weakness (spec 2026-07-23 §1).
+            (1.0 - smoothed).max(0.0) * crate::blend::test_share(&s.category)
         })
         .collect();
 
@@ -132,6 +134,19 @@ mod tests {
         let get = |c: &str| w.iter().find(|x| x.category == c).unwrap();
         assert!((get("A").accuracy - 55.0).abs() < 1e-9);
         assert!((get("Zero").accuracy - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn equal_weakness_higher_test_share_wins() {
+        // Same attempts/correct in both categories; Literature (20%) must
+        // out-weight Sports (2%).
+        let stats = vec![s("Literature & Language", 50, 25), s("Sports & Games", 50, 25)];
+        let w = compute_weights(&stats);
+        let lit = w.iter().find(|x| x.category.starts_with("Lit")).unwrap().weight;
+        let spo = w.iter().find(|x| x.category.starts_with("Spo")).unwrap().weight;
+        assert!(lit > spo * 5.0, "lit {lit} vs sports {spo}");
+        let sum: f64 = w.iter().map(|x| x.weight).sum();
+        assert!((sum - 1.0).abs() < 1e-9);
     }
 
     #[test]

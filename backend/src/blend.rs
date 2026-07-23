@@ -44,6 +44,17 @@ pub fn split_seats(total: i64) -> (i64, i64) {
     (total - recency, recency)
 }
 
+/// Normalized Anytime Test share of a meta-category (TARGET_WEIGHTS sums to
+/// 100). Unknown categories get a 0.02 floor so nothing zeroes out.
+pub fn test_share(category: &str) -> f64 {
+    TARGET_WEIGHTS
+        .iter()
+        .find(|(c, _)| *c == category)
+        .map(|(_, w)| *w as f64 / 100.0)
+        .unwrap_or(0.02)
+        .max(0.02)
+}
+
 /// Fixed weights restricted to categories that have an eligible pool.
 pub fn target_weights(available: &[String]) -> Vec<(String, i64)> {
     TARGET_WEIGHTS
@@ -90,6 +101,13 @@ mod tests {
         assert_eq!(sampling_kind("Music & Performing Arts"), SamplingKind::Split);
         assert_eq!(sampling_kind("Literature & Language"), SamplingKind::Canon);
         assert_eq!(sampling_kind("History & Politics"), SamplingKind::Canon);
+    }
+
+    #[test]
+    fn test_share_normalizes_and_floors() {
+        assert!((test_share("Literature & Language") - 0.20).abs() < 1e-9);
+        assert!((test_share("Sports & Games") - 0.02).abs() < 1e-9);
+        assert!((test_share("No Such Category") - 0.02).abs() < 1e-9);
     }
 
     #[test]
