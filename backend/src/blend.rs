@@ -64,6 +64,34 @@ pub fn target_weights(available: &[String]) -> Vec<(String, i64)> {
         .collect()
 }
 
+/// Projected Anytime Test score from per-category cold accuracy × test share.
+/// Categories without cold data count at a neutral 0.5 and are flagged.
+pub fn projected_mock(cold: &[(String, i64, i64)]) -> serde_json::Value {
+    let mut cats: Vec<serde_json::Value> = Vec::with_capacity(TARGET_WEIGHTS.len());
+    let mut score = 0.0f64;
+    for (name, w) in TARGET_WEIGHTS.iter() {
+        let share = *w as f64 / 100.0;
+        let row = cold.iter().find(|(c, _, _)| c == name);
+        let (acc, estimated) = match row {
+            Some((_, total, correct)) if *total > 0 => (*correct as f64 / *total as f64, false),
+            _ => (0.5, true),
+        };
+        let contribution = share * acc * 50.0;
+        let headroom = share * (1.0 - acc) * 50.0;
+        score += contribution;
+        cats.push(serde_json::json!({
+            "category": name, "share": share, "coldAccuracy": acc,
+            "contribution": contribution, "headroom": headroom, "estimated": estimated,
+        }));
+    }
+    cats.sort_by(|a, b| {
+        b["headroom"].as_f64().unwrap_or(0.0)
+            .partial_cmp(&a["headroom"].as_f64().unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    serde_json::json!({ "score": score, "passLine": 35, "categories": cats })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +148,26 @@ mod tests {
         assert_eq!(w.len(), 2);
         assert!(w.iter().any(|(c, n)| c == "Literature & Language" && *n == 20));
         assert!(w.iter().any(|(c, n)| c == "Sports & Games" && *n == 2));
+    }
+
+    #[test]
+    fn projected_mock_math_and_neutral_fallback() {
+        let cold = vec![
+            ("Literature & Language".to_string(), 100_i64, 43_i64),
+            ("Geography & Exploration".to_string(), 0, 0), // no data -> 0.5 estimated
+        ];
+        let v = projected_mock(&cold);
+        // Only categories in TARGET_WEIGHTS contribute; absent ones count at 0.5.
+        let score = v["score"].as_f64().unwrap();
+        // Lit: .20*.43*50 = 4.3; Geo: .14*.5*50 = 3.5 (estimated); all other
+        // 11 categories: share*.5*50. Total shares = 1.0 → others = (1-.34)*.5*50 = 16.5.
+        assert!((score - (4.3 + 3.5 + 16.5)).abs() < 0.01, "score {score}");
+        assert_eq!(v["passLine"], 35);
+        let cats = v["categories"].as_array().unwrap();
+        assert_eq!(cats.len(), 13);
+        let geo = cats.iter().find(|c| c["category"] == "Geography & Exploration").unwrap();
+        assert_eq!(geo["estimated"], true);
+        // Sorted by headroom desc: Literature (.20*.57*50=5.7) must be first.
+        assert_eq!(cats[0]["category"], "Literature & Language");
     }
 }

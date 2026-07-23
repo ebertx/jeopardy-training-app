@@ -117,6 +117,16 @@ pub async fn stats(
         .fetch_all(&state.pool)
         .await?;
 
+    let cold_triples: Vec<(String, i64, i64)> = categories
+        .iter()
+        .filter_map(|c| {
+            c.classifier_category
+                .clone()
+                .map(|name| (name, c.cold_total, c.cold_correct))
+        })
+        .collect();
+    let projected_mock = crate::blend::projected_mock(&cold_triples);
+
     let category_breakdown: Vec<Value> = categories
         .into_iter()
         .map(|c| {
@@ -217,5 +227,6 @@ pub async fn stats(
             "tests": mock_tests, "best": mock_best, "latest": mock_latest,
             "passLine": crate::routes::mock_test::PASS_LINE,
         },
+        "projectedMock": projected_mock,
     })))
 }
