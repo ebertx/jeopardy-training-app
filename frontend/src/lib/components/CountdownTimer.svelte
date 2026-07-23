@@ -12,8 +12,10 @@
   $effect(() => {
     if (!running) return;
     const iv = setInterval(() => {
+      // No self-clear at 0: the interval must survive so a banish/refetch
+      // (which changes resetKey without ever flipping `running`) resumes
+      // ticking the fresh card. Math.max pins the display at 0 meanwhile.
       remaining = Math.max(0, remaining - 1);
-      if (remaining === 0) clearInterval(iv);
     }, 1000);
     return () => clearInterval(iv);
   });
