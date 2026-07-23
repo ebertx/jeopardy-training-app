@@ -29,6 +29,17 @@
   let submitting = $state(false);
   let inputEl = $state<HTMLInputElement | null>(null);
 
+  // Refocus the answer box for every question. An imperative focus() after
+  // loadCurrent() raced the disabled={submitting} attribute (focusing a
+  // disabled input is a no-op); this effect re-runs after the DOM re-enables
+  // the input when `submitting` flips back to false.
+  $effect(() => {
+    void clue; // re-run per question
+    if (phase === 'active' && !submitting && inputEl) {
+      inputEl.focus();
+    }
+  });
+
   // Results state
   let results = $state<any>(null);
   let overridingPos = $state<number | null>(null);
@@ -65,7 +76,6 @@
     typed = '';
     phase = 'active';
     startTimer();
-    queueMicrotask(() => inputEl?.focus());
   }
 
   async function start() {
