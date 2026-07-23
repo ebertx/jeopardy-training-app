@@ -196,8 +196,13 @@ fn drill_card_json(r: DrillAnswerRow) -> Value {
 pub async fn drill_next(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
+    // extra=true: user chose to keep drilling past the daily new-card
+    // allowance (spec amendment 2026-07-23). Due reviews still serve first;
+    // newRemaining keeps reporting the true value.
+    let extra = params.get("extra").map(|v| v == "true").unwrap_or(false);
     let (new_per_day, tz): (i32, Option<String>) =
         sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
             .bind(user_id)
@@ -263,7 +268,7 @@ pub async fn drill_next(
             "dueCount": due_count, "newRemaining": new_remaining,
         })));
     }
-    if new_remaining > 0 {
+    if new_remaining > 0 || extra {
         if let Some(row) = sqlx::query_as::<_, DrillAnswerRow>(pick_new)
             .bind(user_id)
             .fetch_optional(&state.pool)
@@ -290,9 +295,55 @@ pub async fn drill_next(
     .bind(user_id)
     .fetch_one(&state.pool)
     .await?;
+    // Unseen cards still exist → the frontend can offer "Keep going".
+    let more_new_available: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pavlov_answers pa
+         WHERE pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1))",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
     Ok(Json(json!({
         "done": true, "dueCount": due_count, "newRemaining": new_remaining,
         "nextDueAt": next_due_at, "dueSoonCount": due_soon_count,
+        "moreNewAvailable": more_new_available,
+    })))
+}
+
+/// Lightweight status for the dashboard tile: due/new counts + deck size.
+pub async fn status_user(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+) -> Result<Json<Value>, AppError> {
+    let user_id = auth.user_id;
+    let (new_per_day, tz): (i32, Option<String>) =
+        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&state.pool)
+            .await?;
+    let due_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pavlov_cards ca
+         JOIN pavlov_answers pa ON pa.id = ca.answer_id
+         WHERE ca.user_id = $1 AND ca.suspended = false AND ca.due <= now()",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let day_start = day_start_utc(Utc::now(), tz.as_deref());
+    let new_today: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pavlov_cards WHERE user_id = $1 AND created_at >= $2 AND last_review IS NOT NULL",
+    )
+    .bind(user_id)
+    .bind(day_start)
+    .fetch_one(&state.pool)
+    .await?;
+    let total_cards: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pavlov_answers")
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Json(json!({
+        "dueCount": due_count,
+        "newRemaining": (new_per_day as i64 - new_today).max(0),
+        "totalCards": total_cards,
     })))
 }
 

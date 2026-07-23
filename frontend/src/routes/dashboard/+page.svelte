@@ -35,6 +35,8 @@
   let innerWidth = $state(0);
   let isMobile = $derived(innerWidth > 0 && innerWidth < 640);
 
+  let pavlov = $state<{ dueCount: number; newRemaining: number; totalCards: number } | null>(null);
+
   let srs = $state<{
     dueCount: number;
     newRemaining: number;
@@ -82,6 +84,7 @@
   onMount(() => {
     fetchStats();
     api.get('/api/practice/status').then((s) => (srs = s)).catch(() => (srs = null));
+    api.get('/api/pavlov/status').then((s) => (pavlov = s)).catch(() => (pavlov = null));
     api
       .get('/api/blindspots')
       .then((b) => (blindspots = b))
@@ -274,6 +277,28 @@
             Practice &rarr;
           </a>
         </div>
+        {#if pavlov && pavlov.totalCards > 0}
+          <div class="mt-5 pt-4 border-t border-gray-100 flex flex-wrap items-center gap-8">
+            <div>
+              <p class="text-3xl font-bold text-jeopardy-blue">{pavlov.dueCount}</p>
+              <p class="text-xs uppercase text-gray-500">Pavlov due</p>
+            </div>
+            <div>
+              <p class="text-3xl font-bold text-jeopardy-blue">{pavlov.newRemaining}</p>
+              <p class="text-xs uppercase text-gray-500">Pavlov new left</p>
+            </div>
+            <div class="hidden sm:block">
+              <p class="text-3xl font-bold text-jeopardy-blue">{pavlov.totalCards.toLocaleString()}</p>
+              <p class="text-xs uppercase text-gray-500">Cue cards</p>
+            </div>
+            <a
+              href="/pavlov"
+              class="w-full text-center sm:w-auto sm:ml-auto self-center px-4 py-2 rounded-lg bg-jeopardy-gold text-jeopardy-blue text-sm font-semibold hover:bg-yellow-400 transition-colors"
+            >
+              Pavlov Drill &rarr;
+            </a>
+          </div>
+        {/if}
         {#if forecastChartData}
           <div class="mt-5 pt-4 border-t border-gray-100">
             <h2 class="text-sm font-semibold text-gray-600 mb-2">Reviews due — next {forecastDays} days</h2>

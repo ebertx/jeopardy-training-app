@@ -20,6 +20,8 @@
   let done = $state(false);
   let nextDueAt = $state<string | null>(null);
   let dueSoonCount = $state(0);
+  let moreNewAvailable = $state(false);
+  let extraMode = $state(false); // past-allowance drilling; resets on reload
   let result = $state<{
     answer: string;
     examples: Array<{ clue: string; category: string | null; airDate: string | null }>;
@@ -34,7 +36,7 @@
     error = '';
     result = null;
     try {
-      const res = await api.get('/api/pavlov/drill/next');
+      const res = await api.get(`/api/pavlov/drill/next${extraMode ? '?extra=true' : ''}`);
       dueCount = res.dueCount ?? 0;
       newRemaining = res.newRemaining ?? 0;
       if (res.done) {
@@ -42,6 +44,7 @@
         card = null;
         nextDueAt = res.nextDueAt ?? null;
         dueSoonCount = res.dueSoonCount ?? 0;
+        moreNewAvailable = res.moreNewAvailable ?? false;
       } else {
         done = false;
         card = res.card;
@@ -113,6 +116,11 @@
     }
   }
 
+  function keepGoing() {
+    extraMode = true;
+    fetchNext();
+  }
+
   onMount(fetchNext);
 </script>
 
@@ -124,7 +132,7 @@
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-xl sm:text-2xl font-bold text-jeopardy-blue">Pavlov Drill</h1>
       <div class="text-sm font-medium text-gray-600">
-        Due: {dueCount} · New left: {newRemaining}
+        Due: {dueCount} · New left: {newRemaining}{#if extraMode}&nbsp;· extra mode{/if}
         {#if session.total > 0}
           · Session: {session.correct}/{session.total}
         {/if}
@@ -151,6 +159,14 @@
           <p class="text-sm text-gray-500">Next card due {new Date(nextDueAt).toLocaleString()}.</p>
         {:else}
           <p class="text-sm text-gray-500">No cards due. Generate or unsuspend cues from the list page.</p>
+        {/if}
+        {#if moreNewAvailable}
+          <button
+            onclick={keepGoing}
+            class="mt-4 px-4 py-2 rounded-lg bg-jeopardy-blue text-white font-medium hover:bg-blue-800 transition-colors"
+          >
+            Keep going — new cards beyond today's limit
+          </button>
         {/if}
       </div>
     {:else if card}

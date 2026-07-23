@@ -114,6 +114,7 @@ async fn run() {
         .route("/api/admin/pavlov/generate", post(routes::pavlov::generate))
         .route("/api/admin/pavlov/status", get(routes::pavlov::status))
         .route("/api/pavlov/answers", get(routes::pavlov::answers))
+        .route("/api/pavlov/status", get(routes::pavlov::status_user))
         .route("/api/pavlov/answers/{id}/suspend", post(routes::pavlov::suspend))
         .route("/api/pavlov/drill/next", get(routes::pavlov::drill_next))
         .route("/api/pavlov/drill/check", post(routes::pavlov::drill_check))
