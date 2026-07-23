@@ -84,10 +84,26 @@
     }
   }
 
-  // Space/Enter reveals; 1/2/3 self-grade after reveal (honesty mode).
+  async function banish() {
+    if (!card || submitting) return;
+    submitting = true;
+    try {
+      await api.post(`/api/pavlov/answers/${card.answerId}/suspend`, { suspended: true });
+      await fetchNext();
+    } catch (e: any) {
+      error = e.message || 'Banish failed';
+    } finally {
+      submitting = false;
+    }
+  }
+
+  // Space/Enter reveals; 1/2/3 self-grade after reveal (honesty mode); b banishes anytime.
   function onKeydown(e: KeyboardEvent) {
     if (!card || submitting) return;
-    if (!result && (e.key === ' ' || e.key === 'Enter')) {
+    if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      banish();
+    } else if (!result && (e.key === ' ' || e.key === 'Enter')) {
       e.preventDefault();
       reveal();
     } else if (result) {
@@ -115,7 +131,8 @@
       </div>
     </div>
     <p class="text-sm text-gray-500 mb-6">
-      Trigger keywords → answer. Train the reflex, not the clue.
+      Trigger keywords → answer. Train the reflex, not the clue. Banish (b) removes a bad card —
+      undo on the list page.
       <a href="/pavlov/list" class="text-jeopardy-blue hover:underline">Browse the list →</a>
     </p>
 
@@ -138,11 +155,21 @@
       </div>
     {:else if card}
       <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div class="flex items-center gap-2 mb-4">
-          <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-            {card.category}
-          </span>
-          {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
+        <div class="flex items-center justify-between gap-2 mb-4">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+              {card.category}
+            </span>
+            {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
+          </div>
+          <button
+            onclick={banish}
+            disabled={submitting}
+            title="Remove this card from your deck (undo on the list page)"
+            class="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-2 py-1 disabled:opacity-50 transition-colors"
+          >
+            Banish
+          </button>
         </div>
 
         <div class="mb-6 flex flex-wrap gap-2">
