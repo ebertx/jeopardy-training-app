@@ -320,7 +320,7 @@ pub async fn results(
     auth: AuthUser,
     Path(test_id): Path<i32>,
 ) -> Result<Json<Value>, AppError> {
-    let _ = owned_completed_test(&state, auth.user_id, test_id).await?;
+    let (session_id, _) = owned_completed_test(&state, auth.user_id, test_id).await?;
     #[derive(sqlx::FromRow)]
     struct Row {
         position: i32,
@@ -332,17 +332,24 @@ pub async fn results(
         clue: Option<String>,
         accepted: Option<String>,
         category: Option<String>,
+        miss_kind: Option<String>,
     }
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT mta.position, mta.typed_answer, mta.response_ms, mta.auto_correct,
                 mta.overridden, mta.final_correct,
-                jq.answer AS clue, jq.question AS accepted, jq.category
+                jq.answer AS clue, jq.question AS accepted, jq.category,
+                qa.miss_kind
          FROM mock_test_answers mta
          JOIN jeopardy_questions jq ON jq.id = mta.question_id
+         LEFT JOIN question_attempts qa
+           ON qa.session_id = $2 AND qa.question_id = mta.question_id
+          AND qa.user_id = $3 AND qa.attempt_kind = 'mock'
          WHERE mta.mock_test_id = $1
          ORDER BY mta.position",
     )
     .bind(test_id)
+    .bind(session_id)
+    .bind(auth.user_id)
     .fetch_all(&state.pool)
     .await?;
 
@@ -356,6 +363,7 @@ pub async fn results(
         "position": r.position, "clue": r.clue, "category": r.category,
         "accepted": r.accepted, "typed": r.typed_answer, "responseMs": r.response_ms,
         "autoCorrect": r.auto_correct, "overridden": r.overridden, "finalCorrect": r.final_correct,
+        "missKind": r.miss_kind,
     })).collect();
 
     Ok(Json(json!({ "score": score, "passLine": PASS_LINE, "completedAt": completed_at, "answers": answers })))
@@ -405,6 +413,41 @@ pub async fn override_verdict(
         .await?;
 
     Ok(Json(json!({ "score": score })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissKindBody {
+    pub question_id: i32,
+    pub miss_kind: String,
+}
+
+/// Tag a mock miss: unknown | slow | wording. Idempotent re-tag. Informational
+/// only — does not alter verdicts, stats, or add-misses behavior.
+pub async fn set_miss_kind(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(test_id): Path<i32>,
+    Json(body): Json<MissKindBody>,
+) -> Result<Json<Value>, AppError> {
+    if !matches!(body.miss_kind.as_str(), "unknown" | "slow" | "wording") {
+        return Err(AppError::BadRequest("missKind must be unknown|slow|wording".into()));
+    }
+    let (session_id, _) = owned_completed_test(&state, auth.user_id, test_id).await?;
+
+    // Same attempt-row targeting as override_verdict's second UPDATE: session_id
+    // + question_id + user_id + attempt_kind = 'mock'.
+    let qid: Option<i32> = sqlx::query_scalar(
+        "UPDATE question_attempts SET miss_kind = $4
+         WHERE session_id = $1 AND question_id = $2 AND user_id = $3 AND attempt_kind = 'mock'
+         RETURNING question_id",
+    )
+    .bind(session_id).bind(body.question_id).bind(auth.user_id).bind(&body.miss_kind)
+    .fetch_optional(&state.pool)
+    .await?;
+    qid.ok_or_else(|| AppError::NotFound("No attempt for that question".into()))?;
+
+    Ok(Json(json!({ "questionId": body.question_id, "missKind": body.miss_kind })))
 }
 
 pub async fn add_misses_to_srs(

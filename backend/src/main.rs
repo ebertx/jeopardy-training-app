@@ -103,6 +103,7 @@ async fn run() {
         .route("/api/mock-test/history", get(routes::mock_test::history))
         .route("/api/mock-test/{id}/results", get(routes::mock_test::results))
         .route("/api/mock-test/{id}/override", post(routes::mock_test::override_verdict))
+        .route("/api/mock-test/{id}/miss-kind", post(routes::mock_test::set_miss_kind))
         .route("/api/mock-test/{id}/add-misses-to-srs", post(routes::mock_test::add_misses_to_srs))
         .route("/api/blindspots", get(routes::blindspots::list))
         .route("/api/blindspots/generate", post(routes::blindspots::generate))
