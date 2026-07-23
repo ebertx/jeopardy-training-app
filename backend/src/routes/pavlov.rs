@@ -193,6 +193,57 @@ fn drill_card_json(r: DrillAnswerRow) -> Value {
     json!({ "answerId": r.id, "phrases": phrases, "category": r.meta_category })
 }
 
+/// Category-weighted new-card pick: sample a meta-category by Anytime Test
+/// share (restricted to categories that still have unseen cards for this
+/// user, renormalized by the race), then the evidence race within it. Falls
+/// back to the unfiltered race when the sampled category comes up empty.
+async fn pick_new_card(
+    state: &Arc<AppState>,
+    user_id: i32,
+) -> Result<Option<DrillAnswerRow>, AppError> {
+    let available: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT meta_category FROM pavlov_answers
+         WHERE id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)",
+    )
+    .bind(user_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let avail: Vec<String> = available.into_iter().map(|(c,)| c).collect();
+    let weights = crate::blend::target_weights(&avail);
+    let total: i64 = weights.iter().map(|(_, w)| w).sum();
+    let picked_cat = if total > 0 {
+        use rand::Rng;
+        let mut roll = rand::rng().random_range(0..total);
+        weights.iter().find(|(_, w)| { if roll < *w { true } else { roll -= w; false } })
+            .map(|(c, _)| c.clone())
+    } else {
+        None
+    };
+
+    const PICK_IN_CAT: &str = "SELECT id, phrases, phrase_tiers, meta_category FROM pavlov_answers
+         WHERE meta_category = $2
+           AND id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
+         ORDER BY -ln(random()) / ln(1 + score) LIMIT 1";
+    const PICK_ANY: &str = "SELECT id, phrases, phrase_tiers, meta_category FROM pavlov_answers
+         WHERE id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
+         ORDER BY -ln(random()) / ln(1 + score) LIMIT 1";
+
+    if let Some(cat) = picked_cat {
+        if let Some(row) = sqlx::query_as::<_, DrillAnswerRow>(PICK_IN_CAT)
+            .bind(user_id)
+            .bind(&cat)
+            .fetch_optional(&state.pool)
+            .await?
+        {
+            return Ok(Some(row));
+        }
+    }
+    Ok(sqlx::query_as::<_, DrillAnswerRow>(PICK_ANY)
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await?)
+}
+
 pub async fn drill_next(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -204,7 +255,7 @@ pub async fn drill_next(
     // newRemaining keeps reporting the true value.
     let extra = params.get("extra").map(|v| v == "true").unwrap_or(false);
     let (new_per_day, tz): (i32, Option<String>) =
-        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+        sqlx::query_as("SELECT pavlov_new_per_day, timezone FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&state.pool)
             .await?;
@@ -237,9 +288,6 @@ pub async fn drill_next(
         serve_new(new_remaining, due_count, rand::rng().random())
     };
 
-    let pick_new = "SELECT id, phrases, phrase_tiers, meta_category FROM pavlov_answers
-         WHERE id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
-         ORDER BY -ln(random()) / ln(1 + score) LIMIT 1";
     let fetch_due = "SELECT pa.id, pa.phrases, pa.phrase_tiers, pa.meta_category
          FROM pavlov_cards ca
          JOIN pavlov_answers pa ON pa.id = ca.answer_id
@@ -247,11 +295,7 @@ pub async fn drill_next(
          ORDER BY ca.due ASC LIMIT 1";
 
     if want_new {
-        if let Some(row) = sqlx::query_as::<_, DrillAnswerRow>(pick_new)
-            .bind(user_id)
-            .fetch_optional(&state.pool)
-            .await?
-        {
+        if let Some(row) = pick_new_card(&state, user_id).await? {
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": drill_card_json(row),
                 "dueCount": due_count, "newRemaining": new_remaining,
@@ -269,11 +313,7 @@ pub async fn drill_next(
         })));
     }
     if new_remaining > 0 || extra {
-        if let Some(row) = sqlx::query_as::<_, DrillAnswerRow>(pick_new)
-            .bind(user_id)
-            .fetch_optional(&state.pool)
-            .await?
-        {
+        if let Some(row) = pick_new_card(&state, user_id).await? {
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": drill_card_json(row),
                 "dueCount": due_count, "newRemaining": new_remaining,
@@ -317,7 +357,7 @@ pub async fn status_user(
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
     let (new_per_day, tz): (i32, Option<String>) =
-        sqlx::query_as("SELECT new_cards_per_day, timezone FROM users WHERE id = $1")
+        sqlx::query_as("SELECT pavlov_new_per_day, timezone FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_one(&state.pool)
             .await?;
