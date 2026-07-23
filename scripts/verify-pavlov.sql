@@ -110,11 +110,17 @@ SELECT 'canary_dylan_thomas_card' AS check,
        ) THEN 0 ELSE 1 END AS fail_rows;
 
 -- L. expect 0: same-answer active cue pairs whose punctuation-normalized
---    token sets are subset-related (spelling-variant near-duplicates).
+--    STEM (cue_stem, i.e. the mined gram) token sets are subset-related
+--    (spelling-variant near-duplicates, e.g. "sun tzu" / "sun-tzu"). Scoped
+--    to cue_stem rather than cue_display: extended displays legitimately
+--    overlap (e.g. "Welsh poet" vs. "not go gentle into that Welsh poet"),
+--    so the display would false-positive here. The spelling-variant guard
+--    belongs on the mined grams, which prune_redundant/prune_hints already
+--    dedupe against each other.
 WITH toks AS (
   SELECT id, answer_norm,
          (SELECT array_agg(DISTINCT w ORDER BY w)
-          FROM regexp_split_to_table(lower(regexp_replace(cue_display,'[^a-zA-Z0-9]+',' ','g')),' ') AS w
+          FROM regexp_split_to_table(lower(regexp_replace(cue_stem,'[^a-zA-Z0-9]+',' ','g')),' ') AS w
           WHERE w <> '') AS tokset
   FROM pavlov_cues WHERE status='active'
 )

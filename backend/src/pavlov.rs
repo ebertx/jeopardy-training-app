@@ -44,6 +44,75 @@ fn norm_tokens(s: &str) -> std::collections::HashSet<String> {
         .collect()
 }
 
+/// Tokens that mark Jeopardy!-clue scaffolding rather than substance, when
+/// they occur at the very start of a phrase ("said this Welsh poet", "who
+/// this tree-planting holiday").
+const SCAFFOLD_LEADING: &[&str] =
+    &["said", "says", "who", "whom", "whose", "this", "these", "those", "that", "he", "she", "it", "they"];
+
+/// Tokens that mark a dangling clue connective when left at the very end of
+/// a phrase ("not go gentle into that").
+const SCAFFOLD_TRAILING: &[&str] = &[
+    "into", "that", "this", "of", "the", "a", "an", "to", "in", "on", "for", "with", "and", "or", "is",
+    "was", "are", "were",
+];
+
+/// Strip leading/trailing clue-scaffolding tokens (deictic pronouns, dangling
+/// connectives) from a rendered display phrase. Repeatedly removes a leading
+/// token found in [`SCAFFOLD_LEADING`] or (failing that) a trailing token
+/// found in [`SCAFFOLD_TRAILING`], case-insensitively, until neither edge
+/// matches. Inner casing/punctuation is untouched. If stripping would consume
+/// every token, the original input is returned unchanged rather than "".
+pub fn trim_scaffolding(display: &str) -> String {
+    let words: Vec<&str> = display.split_whitespace().collect();
+    if words.is_empty() {
+        return display.to_string();
+    }
+    let mut lo = 0usize;
+    let mut hi = words.len();
+    loop {
+        if lo >= hi {
+            break;
+        }
+        if SCAFFOLD_LEADING.contains(&words[lo].to_lowercase().as_str()) {
+            lo += 1;
+            continue;
+        }
+        if lo >= hi {
+            break;
+        }
+        if SCAFFOLD_TRAILING.contains(&words[hi - 1].to_lowercase().as_str()) {
+            hi -= 1;
+            continue;
+        }
+        break;
+    }
+    if lo >= hi {
+        return display.to_string();
+    }
+    words[lo..hi].join(" ")
+}
+
+/// Scaffolding tokens ignored when judging whether an "extended" completion
+/// adds any real content beyond `display` (superset of the trim edge sets
+/// plus common possessives/prepositions that carry no cue substance).
+const SCAFFOLD_WORDS: &[&str] = &[
+    "said", "says", "who", "whom", "whose", "this", "these", "those", "that", "he", "she", "it", "they",
+    "its", "his", "her", "their", "the", "a", "an", "of", "to", "in", "into", "on", "for", "with", "and",
+    "or", "is", "was", "are", "were",
+];
+
+/// True when `extended`'s normalized tokens contain at least one word beyond
+/// `display`'s that is not pure scaffolding (see [`SCAFFOLD_WORDS`]) — i.e.
+/// the extension adds real content instead of just clue deixis.
+pub fn extension_is_substantive(display: &str, extended: &str) -> bool {
+    let display_toks = norm_tokens(display);
+    let extended_toks = norm_tokens(extended);
+    extended_toks
+        .difference(&display_toks)
+        .any(|t| !SCAFFOLD_WORDS.contains(&t.as_str()))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CueCandidate {
     pub answer_norm: String,
@@ -570,13 +639,16 @@ async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
             };
             let stored_display = match &out.extended {
                 Some(ext) => {
-                    let grounded = inputs
+                    let trimmed_ext = trim_scaffolding(ext);
+                    let use_extended = inputs
                         .iter()
                         .find(|inp| (inp.answer.to_lowercase(), inp.gram.as_str()) == key)
-                        .is_some_and(|inp| display_grounded(ext, &inp.sample_clues));
-                    if grounded { ext.clone() } else { out.display.clone() }
+                        .is_some_and(|inp| display_grounded(&trimmed_ext, &inp.sample_clues))
+                        && extension_is_substantive(&out.display, &trimmed_ext)
+                        && !phrase_leaks_answer(&out.answer, &trimmed_ext);
+                    if use_extended { trimmed_ext } else { trim_scaffolding(&out.display) }
                 }
-                None => out.display.clone(),
+                None => trim_scaffolding(&out.display),
             };
             let status = if out.keep { "active" } else { "dropped" };
             sqlx::query(
@@ -607,8 +679,20 @@ async fn render_stage(state: &Arc<AppState>) -> Result<(), AppError> {
 }
 
 /// Stage C: rebuild the denormalized card table from active cues. Derived
-/// data — full rebuild is idempotent. Cards require >= 1 active standard cue.
+/// data — full rebuild = delete stale + upsert live. Cards require >= 1
+/// active standard cue.
 async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
+    // Drop cards whose answer no longer has any active standard cue (e.g. all
+    // of its standard cues were re-rendered as dropped since the last run).
+    // pavlov_cards rows cascade off pavlov_answers.
+    sqlx::query(
+        "DELETE FROM pavlov_answers WHERE answer_norm NOT IN
+           (SELECT DISTINCT answer_norm FROM pavlov_cues
+            WHERE status = 'active' AND tier = 'standard')",
+    )
+    .execute(&state.pool)
+    .await?;
+
     let answers: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT answer_norm FROM pavlov_cues
          WHERE status = 'active' AND tier = 'standard'",
@@ -1013,5 +1097,20 @@ mod tests {
         let clues = vec!["This Buffalo team lost 4 straight Super Bowls".to_string()];
         assert!(display_grounded("lost 4 straight super bowls", &clues));
         assert!(!display_grounded("won 4 straight super bowls", &clues));
+    }
+
+    #[test]
+    fn trim_scaffolding_strips_clue_deixis() {
+        assert_eq!(trim_scaffolding("said this Welsh poet"), "Welsh poet");
+        assert_eq!(trim_scaffolding("not go gentle into that"), "not go gentle");
+        assert_eq!(trim_scaffolding("this tree-planting holiday"), "tree-planting holiday");
+        assert_eq!(trim_scaffolding("Welsh poet"), "Welsh poet");
+        assert_eq!(trim_scaffolding("this that the"), "this that the"); // never empty
+    }
+
+    #[test]
+    fn extension_substantive_only_for_content_words() {
+        assert!(extension_is_substantive("straight Super Bowl", "lost 4 straight Super Bowls"));
+        assert!(!extension_is_substantive("Welsh poet", "said this Welsh poet"));
     }
 }
