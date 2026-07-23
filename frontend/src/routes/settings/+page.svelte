@@ -138,7 +138,7 @@
           />
           <span>
             <span class="font-semibold">Adaptive clue selection</span>
-            <span class="text-gray-500">— favor your weaker categories</span>
+            <span class="text-gray-500">— favor weak categories weighted by their share of the real Anytime Test</span>
           </span>
         </label>
 

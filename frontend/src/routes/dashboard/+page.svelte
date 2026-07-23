@@ -332,8 +332,9 @@
           <div class="mt-5 pt-4 border-t border-gray-100">
             <h2 class="text-sm font-semibold text-gray-600 mb-1">Focus areas</h2>
             <p class="text-xs text-gray-400 mb-3">
-              Practice draws new clues from weaker categories more often. The bar and percentage
-              show each category's share of your new clues, weakest first.
+              Practice draws new clues where they're worth the most test points — weakness
+              weighted by each category's share of the real Anytime Test. The bar and percentage
+              show each category's share of your new clues, highest priority first.
             </p>
             <div class="flex flex-col gap-2.5 sm:gap-1.5">
               {#each srs.adaptiveWeights as w (w.category)}
