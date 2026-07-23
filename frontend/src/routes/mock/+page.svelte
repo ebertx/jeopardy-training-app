@@ -141,6 +141,43 @@
     }
   }
 
+  const MISS_KINDS = [
+    { key: 'unknown', label: "Didn't know" },
+    { key: 'slow', label: 'Knew, too slow' },
+    { key: 'wording', label: 'Wording' },
+  ] as const;
+
+  let taggingPos = $state<number | null>(null);
+  async function tagMiss(row: any, missKind: string) {
+    if (taggingPos !== null) return;
+    taggingPos = row.position;
+    try {
+      await api.post(`/api/mock-test/${testId}/miss-kind`, {
+        questionId: row.questionId,
+        missKind,
+      });
+      row.missKind = missKind;
+    } catch {
+      // Non-critical; tag just won't persist
+    } finally {
+      taggingPos = null;
+    }
+  }
+
+  // Breakdown of tagged misses shown in the results header once any exist.
+  let missKindBreakdown = $derived.by(() => {
+    if (!results?.answers) return null;
+    const counts: Record<string, number> = {};
+    for (const row of results.answers) {
+      if (row.missKind) counts[row.missKind] = (counts[row.missKind] ?? 0) + 1;
+    }
+    const total = Object.values(counts).reduce((a: number, b: number) => a + b, 0);
+    if (total === 0) return null;
+    return MISS_KINDS.filter((k) => counts[k.key] > 0)
+      .map((k) => `${k.label} ${counts[k.key]}`)
+      .join(' · ');
+  });
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && phase === 'active') submit();
   }
@@ -205,6 +242,9 @@
             ? `At or above the commonly-cited pass line (${results.passLine}).`
             : `${results.passLine - results.score} short of the commonly-cited pass line (${results.passLine}).`}
         </p>
+        {#if missKindBreakdown}
+          <p class="text-xs text-gray-400 mt-1">Miss tags: {missKindBreakdown}</p>
+        {/if}
         <div class="mt-4 flex justify-center gap-3">
           <button
             onclick={addMisses}
@@ -233,6 +273,22 @@
                 <span class="text-gray-500">Accepted:</span> <span class="font-medium">{row.accepted}</span>
                 {#if row.overridden}<span class="ml-1 text-[10px] uppercase text-amber-600 font-bold">overridden</span>{/if}
               </p>
+              {#if !row.finalCorrect}
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                  {#each MISS_KINDS as k (k.key)}
+                    <button
+                      onclick={() => tagMiss(row, k.key)}
+                      disabled={taggingPos !== null}
+                      class="text-[11px] px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50
+                        {row.missKind === k.key
+                          ? 'bg-jeopardy-blue border-jeopardy-blue text-white'
+                          : 'border-gray-300 text-gray-500 hover:bg-gray-50'}"
+                    >
+                      {k.label}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </div>
             <button
               onclick={() => toggleOverride(row)}

@@ -324,6 +324,7 @@ pub async fn results(
     #[derive(sqlx::FromRow)]
     struct Row {
         position: i32,
+        question_id: i32,
         typed_answer: String,
         response_ms: i32,
         auto_correct: bool,
@@ -335,7 +336,7 @@ pub async fn results(
         miss_kind: Option<String>,
     }
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT mta.position, mta.typed_answer, mta.response_ms, mta.auto_correct,
+        "SELECT mta.position, mta.question_id, mta.typed_answer, mta.response_ms, mta.auto_correct,
                 mta.overridden, mta.final_correct,
                 jq.answer AS clue, jq.question AS accepted, jq.category,
                 qa.miss_kind
@@ -360,7 +361,7 @@ pub async fn results(
             .await?;
 
     let answers: Vec<Value> = rows.into_iter().map(|r| json!({
-        "position": r.position, "clue": r.clue, "category": r.category,
+        "position": r.position, "questionId": r.question_id, "clue": r.clue, "category": r.category,
         "accepted": r.accepted, "typed": r.typed_answer, "responseMs": r.response_ms,
         "autoCorrect": r.auto_correct, "overridden": r.overridden, "finalCorrect": r.final_correct,
         "missKind": r.miss_kind,

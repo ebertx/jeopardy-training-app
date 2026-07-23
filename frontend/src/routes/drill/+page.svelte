@@ -93,6 +93,16 @@
     await fetchNext();
   }
 
+  const PRESETS = [
+    { label: 'Word origins', query: 'from the greek OR from the latin OR word meaning' },
+    { label: 'Vocab', query: 'this word means OR is the word for' },
+  ] as const;
+
+  function applyPreset(query: string) {
+    queryInput = query;
+    startDrill();
+  }
+
   async function handleGrade(rating: 'wrong' | 'got_it' | 'too_easy') {
     if (submitting || !question) return;
     submitting = true;
@@ -247,6 +257,18 @@
         <button type="button" onclick={() => (filtersOpen = !filtersOpen)} class="shrink-0 px-3 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-100">
           Filters
         </button>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Presets</span>
+        {#each PRESETS as preset (preset.label)}
+          <button
+            type="button"
+            onclick={() => applyPreset(preset.query)}
+            class="px-2.5 py-1 rounded-full border border-gray-300 text-xs text-gray-600 hover:bg-jeopardy-gold hover:border-jeopardy-gold hover:text-jeopardy-blue transition-colors"
+          >
+            {preset.label}
+          </button>
+        {/each}
       </div>
       {#if filtersOpen}
         <div class="flex flex-col sm:flex-row sm:items-center gap-4 border-t border-gray-100 pt-3">

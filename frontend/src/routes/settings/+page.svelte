@@ -14,6 +14,7 @@
   // SRS preferences
   let gameTypeFilters = $state<string[]>([]);
   let newCardsPerDay = $state(20);
+  let pavlovNewPerDay = $state(20);
   let timezone = $state('');
   let adaptiveTargeting = $state(true);
   let srsSaved = $state(false);
@@ -23,6 +24,7 @@
       const prefs = await api.get('/api/preferences');
       gameTypeFilters = prefs?.gameTypeFilters ?? [];
       newCardsPerDay = prefs?.newCardsPerDay ?? 20;
+      pavlovNewPerDay = prefs?.pavlovNewPerDay ?? 20;
       timezone = prefs?.timezone ?? '';
       adaptiveTargeting = prefs?.adaptiveTargeting ?? true;
     } catch {
@@ -38,6 +40,7 @@
       await api.put('/api/preferences', {
         gameTypeFilters,
         newCardsPerDay,
+        pavlovNewPerDay,
         timezone,
         adaptiveTargeting,
       });
@@ -98,6 +101,18 @@
             min="0"
             max="500"
             bind:value={newCardsPerDay}
+            onchange={saveSrsPrefs}
+            class="mt-1 w-32 rounded-lg border border-gray-300 px-3 py-2"
+          />
+        </label>
+
+        <label class="block">
+          <span class="text-sm font-semibold text-gray-700">Pavlov new cards/day</span>
+          <input
+            type="number"
+            min="0"
+            max="500"
+            bind:value={pavlovNewPerDay}
             onchange={saveSrsPrefs}
             class="mt-1 w-32 rounded-lg border border-gray-300 px-3 py-2"
           />

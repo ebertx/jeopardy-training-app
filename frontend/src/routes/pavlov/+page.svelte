@@ -3,6 +3,7 @@
   import { getAuth } from '$lib/auth.svelte';
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
+  import CountdownTimer from '$lib/components/CountdownTimer.svelte';
 
   const auth = getAuth();
   $effect(() => {
@@ -178,14 +179,17 @@
             </span>
             {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
           </div>
-          <button
-            onclick={banish}
-            disabled={submitting}
-            title="Remove this card from your deck (undo on the list page)"
-            class="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-2 py-1 disabled:opacity-50 transition-colors"
-          >
-            Banish
-          </button>
+          <div class="flex items-center gap-2">
+            <CountdownTimer resetKey={card.answerId} running={!result} />
+            <button
+              onclick={banish}
+              disabled={submitting}
+              title="Remove this card from your deck (undo on the list page)"
+              class="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-2 py-1 disabled:opacity-50 transition-colors"
+            >
+              Banish
+            </button>
+          </div>
         </div>
 
         <div class="mb-6 flex flex-wrap gap-2">

@@ -12,6 +12,18 @@
     review: KindStat;
     cold30d: KindStat;
     mockReadiness: { tests: Array<{ id: number; completedAt: string; score: number }>; best: number | null; latest: number | null; passLine: number };
+    projectedMock: {
+      score: number;
+      passLine: number;
+      categories: Array<{
+        category: string;
+        share: number;
+        coldAccuracy: number;
+        contribution: number;
+        headroom: number;
+        estimated: boolean;
+      }>;
+    };
     categoryBreakdown: Array<{ category: string; total: number; correct: number; accuracy: number;
       coldTotal: number; coldCorrect: number; coldAccuracy: number;
       reviewTotal: number; reviewCorrect: number; reviewAccuracy: number }>;
@@ -240,6 +252,14 @@
       ? [...stats.categoryBreakdown].sort((a, b) => a.coldAccuracy - b.coldAccuracy)
       : []
   );
+
+  // Top 3 categories with the most projected-score upside, excluding ones with
+  // no cold data yet (estimated at a neutral 0.5 — nothing actionable to show).
+  let topHeadroom = $derived(
+    stats?.projectedMock
+      ? stats.projectedMock.categories.filter((c) => !c.estimated).slice(0, 3)
+      : []
+  );
 </script>
 <svelte:head>
   <title>Dashboard — Jeopardy! Training</title>
@@ -460,6 +480,30 @@
           {/if}
         </div>
       </div>
+
+      <!-- Projected Anytime Test Score -->
+      {#if stats.projectedMock}
+        <div class="bg-white rounded-xl shadow p-6 mb-8">
+          <p class="text-sm font-medium text-gray-500 mb-1">Projected Anytime Test Score</p>
+          <p class="text-4xl font-extrabold {stats.projectedMock.score >= 35 ? 'text-green-600' : stats.projectedMock.score >= 30 ? 'text-amber-500' : 'text-red-500'}">
+            {stats.projectedMock.score.toFixed(1)}/50
+          </p>
+          <p class="text-xs text-gray-400 mt-1">
+            Modeled from each category's cold accuracy weighted by its share of the real test · pass line {stats.projectedMock.passLine}.
+          </p>
+          {#if topHeadroom.length > 0}
+            <div class="mt-4 pt-3 border-t border-gray-100 flex flex-col gap-1.5">
+              <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Biggest opportunities</p>
+              {#each topHeadroom as c (c.category)}
+                <div class="flex items-center justify-between text-sm">
+                  <span class="text-gray-700 truncate">{c.category}</span>
+                  <span class="font-semibold text-jeopardy-blue shrink-0 ml-3">+{c.headroom.toFixed(1)} pts available</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <!-- Daily Accuracy Chart -->
       {#if lineChartData}

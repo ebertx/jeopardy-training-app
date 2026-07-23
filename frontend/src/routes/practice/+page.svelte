@@ -7,6 +7,7 @@
   import CategoryFilter from '$lib/components/CategoryFilter.svelte';
   import SessionSummary from '$lib/components/SessionSummary.svelte';
   import Modal from '$lib/components/Modal.svelte';
+  import CountdownTimer from '$lib/components/CountdownTimer.svelte';
 
   const auth = getAuth();
 
@@ -336,6 +337,9 @@
       </div>
     {:else if question}
       <div class="min-h-[420px]">
+        <div class="flex justify-end mb-1">
+          <CountdownTimer resetKey={question.id} running={!showAnswer} />
+        </div>
         <QuestionCard
           clue={question.answer}
           answer={question.question}
