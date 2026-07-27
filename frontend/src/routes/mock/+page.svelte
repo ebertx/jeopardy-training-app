@@ -141,10 +141,30 @@
 
   let addingMisses = $state(false);
   let missesAdded = $state<number | null>(null);
+  // Per-miss opt-out: all misses start checked; unchecking keeps a question
+  // out of the deck (e.g. grader disagreements you'd override anyway).
+  let excludedIds = $state<Set<number>>(new Set());
+  function toggleExclude(questionId: number) {
+    const next = new Set(excludedIds);
+    if (next.has(questionId)) next.delete(questionId);
+    else next.add(questionId);
+    excludedIds = next;
+  }
+  let missCount = $derived(
+    results?.answers ? results.answers.filter((r: any) => !r.finalCorrect).length : 0
+  );
+  let selectedMissCount = $derived(
+    results?.answers
+      ? results.answers.filter((r: any) => !r.finalCorrect && !excludedIds.has(r.questionId)).length
+      : 0
+  );
   async function addMisses() {
     addingMisses = true;
     try {
-      const res = await api.post(`/api/mock-test/${testId}/add-misses-to-srs`);
+      const questionIds = results.answers
+        .filter((r: any) => !r.finalCorrect && !excludedIds.has(r.questionId))
+        .map((r: any) => r.questionId);
+      const res = await api.post(`/api/mock-test/${testId}/add-misses-to-srs`, { questionIds });
       missesAdded = res.added;
     } finally {
       addingMisses = false;
@@ -258,13 +278,21 @@
         <div class="mt-4 flex justify-center gap-3">
           <button
             onclick={addMisses}
-            disabled={addingMisses || missesAdded !== null}
+            disabled={addingMisses || missesAdded !== null || selectedMissCount === 0}
             class="px-4 py-2 rounded-lg bg-jeopardy-blue text-white text-sm font-semibold hover:bg-blue-800 disabled:opacity-50"
           >
-            {missesAdded !== null ? `${missesAdded} misses added to deck` : 'Add misses to SRS deck'}
+            {missesAdded !== null
+              ? `${missesAdded} added to deck`
+              : `Add ${selectedMissCount} of ${missCount} misses to SRS deck`}
           </button>
           <a href="/dashboard" class="px-4 py-2 rounded-lg border border-gray-300 text-sm font-semibold text-gray-700 hover:bg-gray-50">Dashboard</a>
         </div>
+        {#if missesAdded === null && missCount > 0}
+          <p class="text-xs text-gray-400 mt-2">
+            Review verdicts first — overriding a miss to ✓ keeps it out of the deck (and removes it
+            if added before the override, unless already reviewed). Uncheck any miss below to skip it.
+          </p>
+        {/if}
       </div>
       <div class="bg-white rounded-xl shadow divide-y divide-gray-100">
         {#each results.answers as row}
@@ -284,7 +312,18 @@
                 {#if row.overridden}<span class="ml-1 text-[10px] uppercase text-amber-600 font-bold">overridden</span>{/if}
               </p>
               {#if !row.finalCorrect}
-                <div class="mt-2 flex flex-wrap gap-1.5">
+                <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                  {#if missesAdded === null}
+                    <label class="flex items-center gap-1 text-[11px] text-gray-500 mr-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!excludedIds.has(row.questionId)}
+                        onchange={() => toggleExclude(row.questionId)}
+                        class="w-3.5 h-3.5 accent-jeopardy-blue"
+                      />
+                      to deck
+                    </label>
+                  {/if}
                   {#each MISS_KINDS as k (k.key)}
                     <button
                       onclick={() => tagMiss(row, k.key)}

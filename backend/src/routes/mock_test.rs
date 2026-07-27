@@ -402,6 +402,19 @@ pub async fn override_verdict(
     .execute(&state.pool)
     .await?;
 
+    // Flipping to correct retroactively evicts the card add-misses may have
+    // already created — but only if it was never actually reviewed, so real
+    // study history is never destroyed. Kills the override-after-add trap.
+    if body.correct {
+        sqlx::query(
+            "DELETE FROM srs_cards
+             WHERE user_id = $1 AND question_id = $2 AND reps = 0 AND last_review IS NULL",
+        )
+        .bind(auth.user_id).bind(qid)
+        .execute(&state.pool)
+        .await?;
+    }
+
     let (score,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FILTER (WHERE final_correct) FROM mock_test_answers WHERE mock_test_id = $1",
     )
@@ -451,23 +464,34 @@ pub async fn set_miss_kind(
     Ok(Json(json!({ "questionId": body.question_id, "missKind": body.miss_kind })))
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AddMissesBody {
+    /// Optional subset of question ids to add. Ids that aren't misses of this
+    /// test are ignored — the final_correct filter always applies.
+    pub question_ids: Option<Vec<i32>>,
+}
+
 pub async fn add_misses_to_srs(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(test_id): Path<i32>,
+    body: Option<Json<AddMissesBody>>,
 ) -> Result<Json<Value>, AppError> {
     let _ = owned_completed_test(&state, auth.user_id, test_id).await?;
+    let subset = body.and_then(|Json(b)| b.question_ids);
     let added: i64 = sqlx::query_scalar(
         "WITH ins AS (
            INSERT INTO srs_cards (user_id, question_id)
            SELECT $2, mta.question_id
            FROM mock_test_answers mta
            WHERE mta.mock_test_id = $1 AND mta.final_correct = false
+             AND ($3::int4[] IS NULL OR mta.question_id = ANY($3))
            ON CONFLICT (user_id, question_id) DO NOTHING
            RETURNING 1
          ) SELECT COUNT(*) FROM ins",
     )
-    .bind(test_id).bind(auth.user_id)
+    .bind(test_id).bind(auth.user_id).bind(subset)
     .fetch_one(&state.pool)
     .await?;
     Ok(Json(json!({ "added": added })))
