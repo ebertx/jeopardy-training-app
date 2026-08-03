@@ -171,12 +171,13 @@
         {/if}
       </div>
     {:else if card}
-      <div class="p-6 rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div class="flex items-center justify-between gap-2 mb-4">
+      <!-- Mirrors QuestionCard's layout: category header, centered cue, answer
+           box, grade grid — with example clues BELOW the buttons so grading
+           never requires scrolling. -->
+      <div class="flex flex-col bg-jeopardy-blue rounded-2xl shadow-xl overflow-hidden">
+        <div class="px-6 pt-4 flex items-center justify-between gap-2">
           <div class="flex items-center gap-2">
-            <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-              {card.category}
-            </span>
+            <p class="text-xs font-bold uppercase tracking-widest text-white/60">{card.category}</p>
             {#if isNew}<span class="px-2 py-0.5 rounded-full bg-jeopardy-gold text-jeopardy-blue text-xs font-bold uppercase tracking-wide">new</span>{/if}
           </div>
           <div class="flex items-center gap-2">
@@ -185,52 +186,57 @@
               onclick={banish}
               disabled={submitting}
               title="Remove this card from your deck (undo on the list page)"
-              class="text-xs text-gray-400 hover:text-red-600 border border-gray-200 rounded px-2 py-1 disabled:opacity-50 transition-colors"
+              class="text-xs text-white/50 hover:text-red-300 border border-white/20 rounded px-2 py-1 disabled:opacity-50 transition-colors"
             >
               Banish
             </button>
           </div>
         </div>
 
-        <div class="mb-6 flex flex-wrap gap-2">
-          {#each card.phrases as phrase}
-            <span class="px-4 py-2 rounded-full border text-xl inline-block
-              {phrase.tier === 'hint'
-                ? 'border-gray-200 text-gray-500'
-                : 'border-gray-300 text-gray-900'}">{phrase.text}</span>
-          {/each}
+        <!-- Cue phrases (the question) -->
+        <div class="flex items-center justify-center px-6 py-8">
+          <div class="flex flex-wrap gap-2 justify-center">
+            {#each card.phrases as phrase}
+              <span class="px-4 py-2 rounded-full border text-xl sm:text-2xl font-bold inline-block
+                {phrase.tier === 'hint'
+                  ? 'border-white/10 text-white/50'
+                  : 'border-white/25 text-jeopardy-gold'}">{phrase.text}</span>
+            {/each}
+          </div>
         </div>
 
-        {#if !result}
-          <button
-            onclick={reveal}
-            disabled={submitting}
-            class="px-4 py-2 rounded-lg bg-jeopardy-blue text-white font-medium hover:bg-blue-800 transition-colors disabled:opacity-50"
-          >
-            Show answer
-          </button>
-          <span class="ml-3 text-xs text-gray-400">Space/Enter</span>
-        {:else}
-          <div class="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-200 text-gray-900">
-            Answer: <span class="font-semibold">{result.answer}</span>
-          </div>
-          {#if result.examples.length > 0}
-            <div class="mb-4 text-sm text-gray-600 space-y-2">
-              {#each result.examples as ex}
-                <p>"{ex.clue}" <span class="text-gray-500">({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</span></p>
-              {/each}
+        <div class="px-6 pb-4">
+          {#if !result}
+            <button
+              onclick={reveal}
+              disabled={submitting}
+              class="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-lg transition-colors border border-white/20 disabled:opacity-50"
+            >
+              Show Answer
+            </button>
+            <p class="mt-2 text-center text-xs text-white/40">Space / Enter</p>
+          {:else}
+            <div class="bg-white rounded-xl px-5 py-4 mb-4 text-center">
+              <p class="text-gray-900 font-bold text-xl">{result.answer}</p>
             </div>
+            <div class="grid grid-cols-3 gap-2">
+              <button onclick={() => grade('wrong')} disabled={submitting}
+                class="py-3 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Wrong</button>
+              <button onclick={() => grade('got_it')} disabled={submitting}
+                class="py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Got it</button>
+              <button onclick={() => grade('too_easy')} disabled={submitting}
+                class="py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Too easy</button>
+            </div>
+            <p class="mt-2 text-center text-xs text-white/40">1 / 2 / 3</p>
+            {#if result.examples.length > 0}
+              <div class="mt-4 pt-4 border-t border-white/10 text-sm text-white/80 space-y-2">
+                {#each result.examples as ex}
+                  <p>"{ex.clue}" <span class="text-white/50">({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</span></p>
+                {/each}
+              </div>
+            {/if}
           {/if}
-          <div class="flex gap-2 items-center">
-            <button onclick={() => grade('wrong')} disabled={submitting}
-              class="px-4 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-50 transition-colors">Wrong</button>
-            <button onclick={() => grade('got_it')} disabled={submitting}
-              class="px-4 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold disabled:opacity-50 transition-colors">Got it</button>
-            <button onclick={() => grade('too_easy')} disabled={submitting}
-              class="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold disabled:opacity-50 transition-colors">Too easy</button>
-            <span class="text-xs text-gray-400">1 / 2 / 3</span>
-          </div>
-        {/if}
+        </div>
       </div>
     {/if}
   </div>
