@@ -435,13 +435,21 @@ pub struct DrillGradeBody {
 }
 
 #[derive(sqlx::FromRow)]
-struct PavlovCardRow {
-    state: String,
-    interval_days: f64,
-    ease: f64,
-    reps: i32,
-    lapses: i32,
-    step_index: i16,
+pub(crate) struct PavlovCardRow {
+    pub(crate) state: String,
+    pub(crate) interval_days: f64,
+    pub(crate) ease: f64,
+    pub(crate) reps: i32,
+    pub(crate) lapses: i32,
+    pub(crate) step_index: i16,
+    pub(crate) last_review: Option<DateTime<Utc>>,
+}
+
+/// A grade is the card's first when no card row exists yet, or when the row
+/// was created by a suspend/banish and has never been graded (last_review is
+/// NULL). Mirrors the `last_review IS NOT NULL` rule used for "new today".
+pub(crate) fn is_first_grade(existing: Option<&PavlovCardRow>) -> bool {
+    existing.map_or(true, |r| r.last_review.is_none())
 }
 
 /// SM-2 schedule for a cue card. Deliberately does NOT touch question_attempts
@@ -455,14 +463,17 @@ pub async fn drill_grade(
     let rating = Rating::from_wire(&body.rating)
         .ok_or_else(|| AppError::BadRequest("rating must be wrong|got_it|too_easy".into()))?;
 
+    let mut tx = state.pool.begin().await?;
+
     let existing: Option<PavlovCardRow> = sqlx::query_as(
-        "SELECT state, interval_days, ease, reps, lapses, step_index
+        "SELECT state, interval_days, ease, reps, lapses, step_index, last_review
          FROM pavlov_cards WHERE user_id = $1 AND answer_id = $2",
     )
     .bind(user_id)
     .bind(body.answer_id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?;
+    let first_grade = is_first_grade(existing.as_ref());
     let prev = existing.map(|r| Prev {
         state: CardKind::from_str(&r.state),
         interval_days: r.interval_days,
@@ -503,8 +514,24 @@ pub async fn drill_grade(
     .bind(out.lapses)
     .bind(out.step_index)
     .bind(suspended)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+
+    // Per-grade log — the dashboard's only source for accuracy over time.
+    // `body.rating` was validated by Rating::from_wire above.
+    sqlx::query(
+        "INSERT INTO pavlov_reviews (user_id, answer_id, rating, first_grade, reviewed_at)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(user_id)
+    .bind(body.answer_id)
+    .bind(&body.rating)
+    .bind(first_grade)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(Json(json!({
         "state": out.state.as_str(),
@@ -512,4 +539,39 @@ pub async fn drill_grade(
         "intervalDays": out.interval_days,
         "requeueInSession": out.requeue_in_session,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_first_grade, PavlovCardRow};
+    use chrono::Utc;
+
+    fn row(last_review: Option<chrono::DateTime<Utc>>) -> PavlovCardRow {
+        PavlovCardRow {
+            state: "learning".into(),
+            interval_days: 0.0,
+            ease: 2.5,
+            reps: 0,
+            lapses: 0,
+            step_index: 0,
+            last_review,
+        }
+    }
+
+    #[test]
+    fn no_card_row_is_first_grade() {
+        assert!(is_first_grade(None));
+    }
+
+    #[test]
+    fn banish_created_card_never_graded_is_first_grade() {
+        // suspend() inserts a card row with last_review NULL; un-banishing then
+        // grading must still count as the card's first grade.
+        assert!(is_first_grade(Some(&row(None))));
+    }
+
+    #[test]
+    fn previously_graded_card_is_not_first_grade() {
+        assert!(!is_first_grade(Some(&row(Some(Utc::now())))));
+    }
 }
