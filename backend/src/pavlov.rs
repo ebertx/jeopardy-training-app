@@ -750,15 +750,17 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
         };
         sqlx::query(
             "INSERT INTO pavlov_answers
-               (answer_norm, answer, meta_category, phrases, phrase_tiers, score, example_clue_ids)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (answer_norm, answer, meta_category, phrases, phrase_tiers, score, example_clue_ids, answer_freq)
+             VALUES ($1, $2, $3, $4, $5, $6, $7,
+                     COALESCE((SELECT answer_freq FROM jeopardy_questions WHERE id = $7[1]), 1))
              ON CONFLICT (answer_norm) DO UPDATE SET
                answer = EXCLUDED.answer,
                meta_category = EXCLUDED.meta_category,
                phrases = EXCLUDED.phrases,
                phrase_tiers = EXCLUDED.phrase_tiers,
                score = EXCLUDED.score,
-               example_clue_ids = EXCLUDED.example_clue_ids",
+               example_clue_ids = EXCLUDED.example_clue_ids,
+               answer_freq = EXCLUDED.answer_freq",
         )
         .bind(norm)
         .bind(&answer_display)
