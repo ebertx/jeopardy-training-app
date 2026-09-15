@@ -218,7 +218,7 @@
               <p class="text-3xl font-bold {(stats!.mockReadiness.latest ?? 0) >= stats!.mockReadiness.passLine ? 'text-green-600' : 'text-jeopardy-blue'}">
                 {stats!.mockReadiness.latest}/50
               </p>
-              <p class="text-xs text-gray-400 mt-1">Best {stats!.mockReadiness.best}/50 · pass line {stats!.mockReadiness.passLine} · <a href="/mock" class="text-jeopardy-blue hover:underline">take another →</a></p>
+              <p class="text-xs text-gray-400 mt-1">Best {stats!.mockReadiness.best}/50 · pass line {stats!.mockReadiness.passLine} · <a href="/mock" class="text-jeopardy-blue hover:underline">take another →</a> · <a href="/mock/history" class="text-jeopardy-blue hover:underline">history →</a></p>
             {:else}
               <p class="text-sm text-gray-500 mt-1">No mocks yet.</p>
               <a href="/mock" class="text-sm font-semibold text-jeopardy-blue hover:underline">Take your first mock test →</a>

@@ -35,6 +35,11 @@ const forecast = (base) => Array.from({ length: 14 }, (_, i) => ({ date: isoDay(
 
 const routes = {
   '/api/auth/me': { user: { id: 1, username: 'ebertx', email: 'ebertx@example.com', role: 'admin' } },
+  '/api/mock-test/history': { passLine: 35, best: 21, tests: [
+    { id: 8, completedAt: '2026-09-15T23:46:22Z', score: 20, missKinds: { unknown: 27, slow: 2, wording: 0 } },
+    { id: 5, completedAt: '2026-07-23T22:52:20Z', score: 21, missKinds: { unknown: 20, slow: 6, wording: 3 } },
+    { id: 3, completedAt: '2026-07-20T22:28:34Z', score: 18, missKinds: { unknown: 0, slow: 0, wording: 0 } },
+  ] },
   '/api/blindspots': { configured: true, insufficientData: false, packs: [
     { id: 1, theme: 'Mythology', diagnosis: '' }, { id: 2, theme: 'Opera', diagnosis: '' }, { id: 3, theme: 'Fine Arts', diagnosis: '' } ] },
   '/api/stats': {

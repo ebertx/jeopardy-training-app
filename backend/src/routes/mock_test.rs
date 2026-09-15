@@ -501,17 +501,30 @@ pub async fn history(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let rows: Vec<(i32, Option<DateTime<Utc>>, Option<i32>)> = sqlx::query_as(
-        "SELECT id, completed_at, score FROM mock_tests
-         WHERE user_id = $1 AND completed_at IS NOT NULL
-         ORDER BY completed_at DESC",
+    // One row per completed test with its miss-tag counts (tags live on the
+    // mock attempt rows in question_attempts, keyed by the test's session).
+    let rows: Vec<(i32, Option<DateTime<Utc>>, Option<i32>, i64, i64, i64)> = sqlx::query_as(
+        "SELECT mt.id, mt.completed_at, mt.score,
+                COUNT(*) FILTER (WHERE qa.miss_kind = 'unknown')::bigint,
+                COUNT(*) FILTER (WHERE qa.miss_kind = 'slow')::bigint,
+                COUNT(*) FILTER (WHERE qa.miss_kind = 'wording')::bigint
+         FROM mock_tests mt
+         LEFT JOIN question_attempts qa
+           ON qa.session_id = mt.session_id AND qa.user_id = mt.user_id
+          AND qa.attempt_kind = 'mock' AND qa.correct = false
+         WHERE mt.user_id = $1 AND mt.completed_at IS NOT NULL
+         GROUP BY mt.id, mt.completed_at, mt.score
+         ORDER BY mt.completed_at DESC",
     )
     .bind(auth.user_id)
     .fetch_all(&state.pool)
     .await?;
-    let best = rows.iter().filter_map(|(_, _, s)| *s).max();
+    let best = rows.iter().filter_map(|(_, _, s, _, _, _)| *s).max();
     let tests: Vec<Value> = rows.into_iter()
-        .map(|(id, at, s)| json!({ "id": id, "completedAt": at, "score": s }))
+        .map(|(id, at, s, unknown, slow, wording)| json!({
+            "id": id, "completedAt": at, "score": s,
+            "missKinds": { "unknown": unknown, "slow": slow, "wording": wording },
+        }))
         .collect();
     Ok(Json(json!({ "tests": tests, "best": best, "passLine": PASS_LINE })))
 }

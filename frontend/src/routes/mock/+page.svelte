@@ -45,6 +45,14 @@
   let overridingPos = $state<number | null>(null);
 
   onMount(async () => {
+    // /mock?results=<id> (from the history page) opens a past test's results.
+    const wanted = Number(new URLSearchParams(window.location.search).get('results'));
+    if (wanted > 0) {
+      try {
+        await showResults(wanted);
+        return;
+      } catch { /* fall through to the idle screen */ }
+    }
     // Detect a resumable test without starting a new one.
     try {
       await api.get('/api/mock-test/current');
@@ -120,6 +128,7 @@
 
   async function showResults(id: number) {
     results = await api.get(`/api/mock-test/${id}/results`);
+    testId = id;
     phase = 'results';
   }
 
@@ -226,6 +235,7 @@
       <div class="bg-white rounded-xl shadow p-8 text-center">
         <h1 class="text-3xl font-bold text-jeopardy-blue mb-3">Anytime Test Simulator</h1>
         <p class="text-gray-600 mb-2">50 clues you've never seen · 15 seconds each · typed answers.</p>
+        <p class="text-sm mb-2"><a href="/mock/history" class="text-jeopardy-blue hover:underline">Past tests &rarr;</a></p>
         <p class="text-gray-500 text-sm mb-6">
           No feedback until the end — just like the real thing. Spelling is graded phonetically.
           The commonly-cited pass line is 35/50.
@@ -275,6 +285,7 @@
         {#if missKindBreakdown}
           <p class="text-xs text-gray-400 mt-1">Miss tags: {missKindBreakdown}</p>
         {/if}
+        <p class="text-xs mt-1"><a href="/mock/history" class="text-jeopardy-blue hover:underline">All past tests &rarr;</a></p>
         <div class="mt-4 flex justify-center gap-3">
           <button
             onclick={addMisses}
