@@ -27,7 +27,15 @@
       "Bash(lsof:*)",
       "Bash(npx tsx:*)",
       "Bash(git rebase:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(npm run build:*)",
+      "Bash(git worktree:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(git pull:*)",
+      "Bash(/opt/homebrew/bin/psql:*)",
+      "Bash(npx prisma db execute:*)"
     ],
     "deny": [],
     "ask": []

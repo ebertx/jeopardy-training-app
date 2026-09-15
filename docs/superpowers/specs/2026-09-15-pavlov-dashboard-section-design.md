@@ -105,9 +105,12 @@ Progress math (pure function, unit tested):
 - `touched` = count of `pavlov_cards` rows for the user (banished included —
   a banished card is done).
 - `trailingPerDay` = cards created in the last 14 local days / 14.
-- `daysLeft` = targetDate − today (local), min 0.
+- `daysLeft` = calendar days from today through targetDate inclusive
+  (target − today + 1, local dates), min 0. "Finish by Dec 31" means Dec 31
+  is still a drilling day.
 - `requiredPerDay` = ceil((deckTotal − touched) / daysLeft); if daysLeft = 0
-  and remaining > 0, report remaining and flag `pastTarget: true`.
+  (target already passed) and remaining > 0, report remaining and flag
+  `pastTarget: true`.
 - `projectedFinish` = today + ceil(remaining / trailingPerDay) days;
   null when trailingPerDay = 0.
 - `daysAhead` = daysLeft − ceil(remaining / trailingPerDay); null when
