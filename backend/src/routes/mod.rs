@@ -9,6 +9,7 @@ pub mod insight;
 pub mod mastery;
 pub mod mock_test;
 pub mod pavlov;
+pub mod pavlov_stats;
 pub mod practice;
 pub mod preferences;
 pub mod primers;
