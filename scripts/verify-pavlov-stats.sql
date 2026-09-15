@@ -55,3 +55,42 @@ WHERE pr.user_id = 1 AND pc.user_id IS NULL;
 SELECT 'duplicate_first_grade' AS check, count(*) AS fail_rows FROM (
   SELECT answer_id FROM pavlov_reviews WHERE user_id = 1 AND first_grade GROUP BY answer_id HAVING count(*) > 1
 ) d;
+
+-- H. Handler daily query, verbatim shape (SPLIT_COLS + timezone bucket).
+SELECT (reviewed_at AT TIME ZONE 'America/Los_Angeles')::date AS date,
+       COUNT(*)::bigint AS total,
+       COUNT(*) FILTER (WHERE rating <> 'wrong')::bigint AS correct,
+       COUNT(*) FILTER (WHERE first_grade)::bigint AS cold_total,
+       COUNT(*) FILTER (WHERE first_grade AND rating <> 'wrong')::bigint AS cold_correct,
+       COUNT(*) FILTER (WHERE NOT first_grade)::bigint AS review_total,
+       COUNT(*) FILTER (WHERE NOT first_grade AND rating <> 'wrong')::bigint AS review_correct
+FROM pavlov_reviews
+WHERE user_id = 1 AND reviewed_at >= now() - interval '30 days'
+GROUP BY 1 ORDER BY 1;
+
+-- I. Handler category query, verbatim shape (SPLIT_COLS + pavlov_answers join).
+SELECT pa.meta_category AS category,
+       COUNT(*)::bigint AS total,
+       COUNT(*) FILTER (WHERE rating <> 'wrong')::bigint AS correct,
+       COUNT(*) FILTER (WHERE first_grade)::bigint AS cold_total,
+       COUNT(*) FILTER (WHERE first_grade AND rating <> 'wrong')::bigint AS cold_correct,
+       COUNT(*) FILTER (WHERE NOT first_grade)::bigint AS review_total,
+       COUNT(*) FILTER (WHERE NOT first_grade AND rating <> 'wrong')::bigint AS review_correct
+FROM pavlov_reviews pr
+JOIN pavlov_answers pa ON pa.id = pr.answer_id
+WHERE pr.user_id = 1
+GROUP BY 1 ORDER BY 1;
+
+-- J. Remaining handler queries, literals substituted for bound params.
+-- cold30d (c30_t/c30_c).
+SELECT COUNT(*)::bigint, COUNT(*) FILTER (WHERE rating <> 'wrong')::bigint
+FROM pavlov_reviews
+WHERE user_id = 1 AND first_grade AND reviewed_at >= now() - interval '30 days';
+
+-- historySince.
+SELECT MIN(reviewed_at) FROM pavlov_reviews WHERE user_id = 1;
+
+-- created_14d (window_start = day_start - 13 days; now() - 13 days stands in
+-- for the handler's user-local day_start here since this section is a shape
+-- check, not a value check).
+SELECT COUNT(*) FROM pavlov_cards WHERE user_id = 1 AND created_at >= now() - interval '13 days';

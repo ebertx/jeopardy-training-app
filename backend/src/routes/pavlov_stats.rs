@@ -216,6 +216,7 @@ pub async fn stats(
         .await?;
     let touched = learning + maturing + mastered + struggling + banished;
 
+    // Keep in sync with routes/practice.rs (same upsert + baseline rule).
     // Snapshot today (user-local date) and diff against a baseline: newest
     // snapshot at least a week old, else the oldest one before today.
     sqlx::query(

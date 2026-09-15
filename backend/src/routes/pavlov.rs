@@ -350,43 +350,6 @@ pub async fn drill_next(
     })))
 }
 
-/// Lightweight status for the dashboard tile: due/new counts + deck size.
-pub async fn status_user(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-) -> Result<Json<Value>, AppError> {
-    let user_id = auth.user_id;
-    let (new_per_day, tz): (i32, Option<String>) =
-        sqlx::query_as("SELECT pavlov_new_per_day, timezone FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_one(&state.pool)
-            .await?;
-    let due_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards ca
-         JOIN pavlov_answers pa ON pa.id = ca.answer_id
-         WHERE ca.user_id = $1 AND ca.suspended = false AND ca.due <= now()",
-    )
-    .bind(user_id)
-    .fetch_one(&state.pool)
-    .await?;
-    let day_start = day_start_utc(Utc::now(), tz.as_deref());
-    let new_today: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards WHERE user_id = $1 AND created_at >= $2 AND last_review IS NOT NULL",
-    )
-    .bind(user_id)
-    .bind(day_start)
-    .fetch_one(&state.pool)
-    .await?;
-    let total_cards: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pavlov_answers")
-        .fetch_one(&state.pool)
-        .await?;
-    Ok(Json(json!({
-        "dueCount": due_count,
-        "newRemaining": (new_per_day as i64 - new_today).max(0),
-        "totalCards": total_cards,
-    })))
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckBody {

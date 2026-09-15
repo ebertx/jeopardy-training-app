@@ -569,6 +569,7 @@ pub async fn status(
     .await?;
     let (learning, maturing, mastered, struggling) = deck;
 
+    // Keep in sync with routes/pavlov_stats.rs (same upsert + baseline rule).
     // Upsert today's snapshot (user-local date), then diff against a baseline:
     // newest snapshot at least a week old, else the oldest one before today.
     let today = Utc::now().with_timezone(&zone).date_naive();
