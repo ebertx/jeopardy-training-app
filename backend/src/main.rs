@@ -9,6 +9,7 @@ mod srs;
 mod adaptive;
 mod blend;
 mod pavlov;
+mod pavlov_stats;
 mod insights;
 mod openai;
 mod routes;
