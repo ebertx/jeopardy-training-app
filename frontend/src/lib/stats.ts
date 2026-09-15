@@ -19,7 +19,7 @@ export interface SplitStat {
 }
 
 export interface CategoryStat extends SplitStat {
-  category: string;
+  category: string | null;
 }
 
 export interface DailyStat extends SplitStat {

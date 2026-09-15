@@ -99,6 +99,13 @@
       <h1 class="text-3xl font-bold text-jeopardy-blue">Dashboard</h1>
     </div>
 
+    <div class="flex flex-wrap gap-3 mb-8">
+      <a href="/pavlov" class="px-5 py-2.5 bg-jeopardy-gold text-jeopardy-blue font-semibold rounded-lg hover:bg-yellow-400 transition-colors">Pavlov Drill</a>
+      <a href="/practice" class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors">Practice</a>
+      <a href="/drill" class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors">Drill</a>
+      <a href="/coryat" class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors">Coryat</a>
+    </div>
+
     <!-- ============================ Pavlov ============================ -->
     {#if pavlov && pavlov.progress.deckTotal > 0}
       <StatsSection
@@ -110,7 +117,7 @@
         cold30d={pavlov.cold30d}
         cold={pavlov.cold}
         review={pavlov.review}
-        unitLabel="cue cards"
+        coldCaption="First grade on each cue card only"
         reviewLabel="cue reviews"
         historySince={pavlov.historySince}
         daily={pavlov.dailyAccuracy}
@@ -141,7 +148,7 @@
         cold30d={stats.cold30d}
         cold={stats.cold}
         review={stats.review}
-        unitLabel="questions"
+        coldCaption="First-attempt questions only — the number the Anytime Test measures"
         reviewLabel="SRS reviews"
         daily={stats.dailyAccuracy}
         categories={stats.categoryBreakdown}
@@ -202,11 +209,6 @@
               <span class="text-gray-400 group-hover:text-gray-600 text-lg">&rarr;</span>
             </a>
           {/if}
-          <div class="flex flex-wrap gap-3 mb-8">
-            <a href="/practice" class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors">Practice</a>
-            <a href="/drill" class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors">Drill</a>
-            <a href="/coryat" class="px-5 py-2.5 bg-jeopardy-blue text-white font-semibold rounded-lg hover:bg-blue-800 transition-colors">Coryat</a>
-          </div>
         {/snippet}
 
         {#snippet readiness()}

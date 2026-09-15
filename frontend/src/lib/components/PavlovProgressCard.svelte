@@ -39,6 +39,9 @@
       {:else}
         · no new cards in 14 days
       {/if}
+      {#if progress.daysAhead !== null}
+        · <span class="font-semibold {paceClass}">{Math.abs(progress.daysAhead)} days {progress.daysAhead >= 0 ? 'ahead' : 'behind'}</span>
+      {/if}
     </p>
   {/if}
 </div>

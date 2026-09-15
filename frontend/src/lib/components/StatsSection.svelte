@@ -22,8 +22,8 @@
     cold30d: KindStat | null;
     cold: KindStat | null;
     review: KindStat | null;
-    /** Caption under the cold tile's number, e.g. 'clues' or 'cue cards'. */
-    unitLabel: string;
+    /** Full caption under the cold tile's number, e.g. 'First-attempt questions only'. */
+    coldCaption: string;
     reviewLabel: string;
     /** ISO timestamp of the first logged review; used for the empty state. */
     historySince?: string | null;
@@ -46,7 +46,7 @@
     cold30d,
     cold,
     review,
-    unitLabel,
+    coldCaption,
     reviewLabel,
     historySince = null,
     daily,
@@ -150,7 +150,7 @@
   let barChartData = $derived(
     categories.length
       ? {
-          labels: categories.map((c) => c.category),
+          labels: categories.map((c) => c.category ?? 'Uncategorized'),
           datasets: [
             {
               label: 'Cold accuracy %',
@@ -281,12 +281,12 @@
             {cold30d.total > 0 ? `${cold30d.accuracy.toFixed(1)}%` : '—'}
           </p>
           <p class="text-xs text-gray-400 mt-1">
-            First-attempt {unitLabel} only ({cold30d.total}) — the number the Anytime Test measures. All-time: {cold.accuracy.toFixed(1)}%.
+            {coldCaption} ({cold30d.total}) · all-time {cold.accuracy.toFixed(1)}%.
           </p>
         {:else}
           <p class="text-4xl font-extrabold text-gray-300">—</p>
           <p class="text-xs text-gray-400 mt-1">
-            {historySince ? `Tracking since ${fmtDate(historySince.slice(0, 10))}.` : 'Tracking starts with your next drill.'}
+            {historySince ? `Tracking since ${fmtDate(localDateKey(new Date(historySince)))}.` : 'Tracking starts with your next drill.'}
           </p>
         {/if}
       </div>
@@ -346,9 +346,9 @@
             </tr>
           </thead>
           <tbody>
-            {#each sortedCategories as cat (cat.category)}
+            {#each sortedCategories as cat (cat.category ?? '')}
               <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                <td class="py-3 px-2 sm:px-4 text-gray-800">{cat.category}</td>
+                <td class="py-3 px-2 sm:px-4 text-gray-800">{cat.category ?? 'Uncategorized'}</td>
                 <td class="hidden sm:table-cell py-3 px-2 sm:px-4 text-right text-gray-600">{cat.total}</td>
                 <td class="hidden sm:table-cell py-3 px-2 sm:px-4 text-right text-gray-600">{cat.correct}</td>
                 <td class="py-3 px-2 sm:px-4 text-right font-medium {cat.coldAccuracy >= 70 ? 'text-green-600' : cat.coldAccuracy >= 50 ? 'text-amber-500' : 'text-red-500'}">
