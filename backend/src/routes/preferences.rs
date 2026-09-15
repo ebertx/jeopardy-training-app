@@ -13,8 +13,8 @@ pub async fn get(
 ) -> Result<Json<Value>, AppError> {
     let user_id = auth.user_id;
 
-    let row: (Option<String>, i32, Option<String>, bool, i32) = sqlx::query_as(
-        "SELECT game_type_filters, new_cards_per_day, timezone, adaptive_targeting, pavlov_new_per_day FROM users WHERE id = $1",
+    let row: (Option<String>, i32, Option<String>, bool, i32, chrono::NaiveDate) = sqlx::query_as(
+        "SELECT game_type_filters, new_cards_per_day, timezone, adaptive_targeting, pavlov_new_per_day, pavlov_target_date FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_one(&state.pool)
@@ -31,6 +31,7 @@ pub async fn get(
         "timezone": row.2,
         "adaptiveTargeting": row.3,
         "pavlovNewPerDay": row.4,
+        "pavlovTargetDate": row.5,
     })))
 }
 
@@ -42,6 +43,7 @@ pub struct UpdatePreferencesBody {
     pub timezone: Option<String>,
     pub adaptive_targeting: Option<bool>,
     pub pavlov_new_per_day: Option<i32>,
+    pub pavlov_target_date: Option<chrono::NaiveDate>,
 }
 
 pub async fn update(
@@ -86,6 +88,13 @@ pub async fn update(
         let n = n.clamp(0, 500);
         sqlx::query("UPDATE users SET pavlov_new_per_day = $1 WHERE id = $2")
             .bind(n)
+            .bind(user_id)
+            .execute(&state.pool)
+            .await?;
+    }
+    if let Some(d) = body.pavlov_target_date {
+        sqlx::query("UPDATE users SET pavlov_target_date = $1 WHERE id = $2")
+            .bind(d)
             .bind(user_id)
             .execute(&state.pool)
             .await?;

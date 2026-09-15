@@ -15,6 +15,7 @@
   let gameTypeFilters = $state<string[]>([]);
   let newCardsPerDay = $state(20);
   let pavlovNewPerDay = $state(20);
+  let pavlovTargetDate = $state('');
   let timezone = $state('');
   let adaptiveTargeting = $state(true);
   let srsSaved = $state(false);
@@ -25,6 +26,7 @@
       gameTypeFilters = prefs?.gameTypeFilters ?? [];
       newCardsPerDay = prefs?.newCardsPerDay ?? 20;
       pavlovNewPerDay = prefs?.pavlovNewPerDay ?? 20;
+      pavlovTargetDate = prefs?.pavlovTargetDate ?? '';
       timezone = prefs?.timezone ?? '';
       adaptiveTargeting = prefs?.adaptiveTargeting ?? true;
     } catch {
@@ -41,6 +43,8 @@
         gameTypeFilters,
         newCardsPerDay,
         pavlovNewPerDay,
+        // Empty string would fail NaiveDate parsing server-side; omit instead.
+        pavlovTargetDate: pavlovTargetDate || undefined,
         timezone,
         adaptiveTargeting,
       });
@@ -116,6 +120,17 @@
             onchange={saveSrsPrefs}
             class="mt-1 w-32 rounded-lg border border-gray-300 px-3 py-2"
           />
+        </label>
+
+        <label class="block">
+          <span class="text-sm font-semibold text-gray-700">Pavlov target date</span>
+          <input
+            type="date"
+            bind:value={pavlovTargetDate}
+            onchange={saveSrsPrefs}
+            class="mt-1 w-48 rounded-lg border border-gray-300 px-3 py-2"
+          />
+          <span class="block text-xs text-gray-400 mt-1">The dashboard's deck-progress pace is measured against this date.</span>
         </label>
 
         <label class="block">
