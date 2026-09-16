@@ -10,6 +10,10 @@ pub const HOOK_MAX_PER_ENTITY: usize = 8;
 pub const HOOK_UNIGRAM_MAX_DF: i64 = 3000;
 pub const HOOK_BIGRAM_MAX_DF: i64 = 300;
 pub const HOOK_MERGE_JACCARD: f64 = 0.5;
+/// Only the most distinctive grams take part in clustering; hooks are capped
+/// at HOOK_MAX_PER_ENTITY anyway, so the top seeds by support × idf carry every
+/// angle that could rank. Bounds the pairwise merge loop on huge entities.
+pub const HOOK_MAX_SEEDS: usize = 60;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GramStat {
@@ -63,7 +67,7 @@ struct Work {
 }
 
 /// Cluster an entity's grams into hooks:
-/// 1. seeds = grams passing `is_seed`, ordered by support desc, gram asc;
+/// 1. seeds = grams passing `is_seed`, the top HOOK_MAX_SEEDS by support × idf, ordered by support desc, gram asc;
 /// 2. greedy agglomeration — repeatedly merge the pair with the highest
 ///    `merge_score` (first pair wins ties) until none qualifies;
 /// 3. every clue is assigned to the one cluster whose grams present in the
@@ -72,6 +76,13 @@ struct Work {
 ///    support desc, key_gram asc, and capped at HOOK_MAX_PER_ENTITY.
 pub fn cluster_hooks(grams: &[GramStat], corpus_clues: i64) -> Vec<Cluster> {
     let mut seeds: Vec<&GramStat> = grams.iter().filter(|g| is_seed(g)).collect();
+    // Keep the HOOK_MAX_SEEDS most distinctive grams (support × idf), ties by gram.
+    seeds.sort_by(|a, b| {
+        let wa = a.support as f64 * idf(corpus_clues, a.corpus_df);
+        let wb = b.support as f64 * idf(corpus_clues, b.corpus_df);
+        wb.partial_cmp(&wa).unwrap_or(std::cmp::Ordering::Equal).then(a.gram.cmp(&b.gram))
+    });
+    seeds.truncate(HOOK_MAX_SEEDS);
     seeds.sort_by(|a, b| b.support.cmp(&a.support).then(a.gram.cmp(&b.gram)));
     let weight: Vec<f64> = seeds.iter().map(|g| idf(corpus_clues, g.corpus_df)).collect();
 
@@ -260,6 +271,21 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].grams, vec!["x", "x y", "z"]);
         assert_eq!(out[0].key_gram, "x y"); // 3 × idf(50) beats 3 × idf(100)
+    }
+
+    #[test]
+    fn seeds_are_capped_by_weight_before_clustering() {
+        // 60 distinctive seeds (df 10, 2 clues each) plus one "zz" seed that has the
+        // highest support (3) but the lowest support × idf (df 2999). Without the cap
+        // "zz" would lead the support-ordered seed list; with it, "zz" is cut.
+        let mut grams: Vec<GramStat> = (0..60)
+            .map(|i| g(&format!("g{i:02}"), 1, 10, &[i * 10, i * 10 + 1]))
+            .collect();
+        grams.push(g("zz", 1, 2999, &[9001, 9002, 9003]));
+        let out = cluster_hooks(&grams, 530_000);
+        assert_eq!(out.len(), HOOK_MAX_PER_ENTITY);
+        assert!(out.iter().all(|c| c.key_gram != "zz"), "lowest-weight seed must be cut by HOOK_MAX_SEEDS");
+        assert_eq!(out[0].key_gram, "g00");
     }
 
     #[test]
