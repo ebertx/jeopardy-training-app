@@ -17,13 +17,15 @@ const UPDATE_CHUNK: usize = 5000;
 
 /// Resolve the whole non-archived corpus into entities (pure, in memory).
 pub async fn resolved_entities(state: &Arc<AppState>) -> Result<Vec<Entity>, AppError> {
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT question, count(*) FROM jeopardy_questions
+    let rows: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT question, count(*), COALESCE(mode() WITHIN GROUP (ORDER BY classifier_category), '')
+         FROM jeopardy_questions
          WHERE archived = false AND question IS NOT NULL GROUP BY 1",
     )
     .fetch_all(&state.pool)
     .await?;
-    let forms: Vec<Form> = rows.into_iter().map(|(raw, count)| Form { raw, count }).collect();
+    let forms: Vec<Form> =
+        rows.into_iter().map(|(raw, count, category)| Form { raw, count, category }).collect();
     let entities = entity::resolve(&forms);
     tracing::info!("objects: {} response forms -> {} entities", forms.len(), entities.len());
     Ok(entities)

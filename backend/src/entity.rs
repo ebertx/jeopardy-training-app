@@ -137,6 +137,40 @@ fn strip_quoted(s: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Count-weighted mode of a set of (category, count) pairs; ties keep the
+/// alphabetically-first category (via `BTreeMap`'s ascending iteration
+/// order). An empty string is an ordinary candidate here — it's R3′'s
+/// absorption guard, not this function, that treats "no dominant category"
+/// as never matching anything.
+fn dominant_category<'a>(items: impl Iterator<Item = (&'a str, i64)>) -> String {
+    let mut counts: BTreeMap<&str, i64> = BTreeMap::new();
+    for (cat, c) in items {
+        *counts.entry(cat).or_insert(0) += c;
+    }
+    counts
+        .into_iter()
+        .fold(None::<(&str, i64)>, |best, (cat, c)| match best {
+            Some((bc_cat, bc)) if bc >= c => Some((bc_cat, bc)),
+            _ => Some((cat, c)),
+        })
+        .map(|(cat, _)| cat.to_string())
+        .unwrap_or_default()
+}
+
+/// R3′(c): a bare single-token key's form is eligible to move into a
+/// licensed full-name entity only if it plainly names the person by itself —
+/// a single token, starting with an uppercase letter, with no parenthesis or
+/// quote (and, being a single token, trivially no leading `the `/`a `/`an `
+/// either). Lowercase and article-led forms almost always name a different,
+/// unrelated sense of the same word (`"temple"` the building vs. `"Temple"`
+/// the surname) and are never moved.
+fn is_eligible_bare_form(raw: &str) -> bool {
+    let t = raw.trim();
+    t.split_whitespace().count() == 1
+        && !t.chars().any(|c| matches!(c, '(' | ')' | '"'))
+        && t.chars().next().is_some_and(|c| c.is_uppercase())
+}
+
 /// `"(First) Last"` → `Some((first_lower, last_key))`. The parenthetical must
 /// open the string; the remainder must be a single-word name (no commas, no
 /// digits, no spaces after normalization); the first name must be name-like
@@ -163,6 +197,8 @@ pub fn parenthetical_license(raw: &str) -> Option<(String, String)> {
 pub struct Form {
     pub raw: String,
     pub count: i64,
+    /// The dominant `classifier_category` of this form's clues; "" when none.
+    pub category: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,13 +214,21 @@ pub struct Entity {
 /// 1. key = entity_key(raw) — always the full name (R2): a leading name-like
 ///    parenthetical is already folded into it by `strip_parens`, so
 ///    `"(Edvard) Grieg"` and `"Edvard Grieg"` share the key `edvard grieg`.
-/// 2. a single-token (bare-surname) key `s` is absorbed into a multi-token
-///    key `f s` only when BOTH hold (R3): exactly one distinct first name
-///    `f` is licensed for `s` (via `parenthetical_license` on some form
-///    `"(f) s"`), and the bare form isn't the dominant usage — its count
-///    does not exceed the summed count of the `f s` forms. Otherwise the
-///    bare form stays its own entity, so an ambiguous or dominant surname
-///    (`Washington`, `London`) never swallows unrelated answers.
+/// 2. a single-token (bare-surname) key `s` splits into eligible forms
+///    (single-token, uppercase-led, no parens/quotes — plainly the name by
+///    itself, e.g. `"Caesar"`) and ineligible ones (`"caesar"`, `"a Caesar"`,
+///    `"the temple"` — almost always a different, unrelated sense of the
+///    same word). Only the eligible subset is ever a candidate to move into
+///    a multi-token key `f s`, and only when BOTH hold (R3′): exactly one
+///    distinct first name `f` is licensed for `s` (via `parenthetical_license`
+///    on some form `"(f) s"`), and the eligible subset's dominant category
+///    (count-weighted mode) equals `f s`'s dominant category and is
+///    non-empty. The ineligible subset always stays behind under key `s`;
+///    if the guards fail, the eligible subset stays there too. This is why
+///    an ambiguous surname (`Washington`) or a category mismatch (`London`
+///    the place vs. `Jack London`) never swallows unrelated answers, while a
+///    same-category surname (`Beethoven`) is absorbed even when the bare
+///    form is more frequent than the full name.
 /// 3. display = the form with the most tokens (parentheticals stripped), ties
 ///    by count; forms = raw strings by count desc; freq = sum of counts.
 pub fn resolve(forms: &[Form]) -> Vec<Entity> {
@@ -204,32 +248,57 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
         groups.entry(key).or_default().push(f);
     }
 
-    // Bare-surname absorption (R3): a single-token key with exactly one
-    // licensed first name is folded into that full-name key, unless the
-    // bare form's own count already dominates the full-name forms' total.
-    let freq_by_key: HashMap<&str, i64> =
-        groups.iter().map(|(k, members)| (k.as_str(), members.iter().map(|m| m.count).sum())).collect();
-    let mut absorbed_into: HashMap<String, String> = HashMap::new();
-    for key in groups.keys() {
-        if key.contains(' ') {
-            continue; // already a full name, nothing to absorb it into
-        }
-        let Some(firsts) = licenses.get(key) else { continue };
-        if firsts.len() != 1 {
-            continue; // ambiguous: more than one licensed first name
-        }
-        let first = firsts.iter().next().unwrap();
-        let full_key = format!("{first} {key}");
-        let Some(&full_freq) = freq_by_key.get(full_key.as_str()) else { continue };
-        if freq_by_key[key.as_str()] <= full_freq {
-            absorbed_into.insert(key.clone(), full_key);
-        }
-    }
+    // Every key's own dominant category (count-weighted mode), needed as the
+    // right-hand side of the R3′ absorption guard. Owned (not borrowed from
+    // `groups`) so it survives the `groups` consuming loop below.
+    let category_by_key: HashMap<String, String> = groups
+        .iter()
+        .map(|(k, members)| {
+            (k.clone(), dominant_category(members.iter().map(|m| (m.category.as_str(), m.count))))
+        })
+        .collect();
 
+    // Bare-surname absorption (R3′): see the doc comment above.
     let mut merged: BTreeMap<String, Vec<&Form>> = BTreeMap::new();
     for (key, members) in groups {
-        let target = absorbed_into.remove(&key).unwrap_or(key);
-        merged.entry(target).or_default().extend(members);
+        if key.contains(' ') {
+            merged.entry(key).or_default().extend(members);
+            continue; // already a full name, nothing to absorb it into
+        }
+        let (eligible, ineligible): (Vec<&Form>, Vec<&Form>) =
+            members.into_iter().partition(|m| is_eligible_bare_form(&m.raw));
+
+        let absorption_target = licenses
+            .get(&key)
+            .filter(|firsts| firsts.len() == 1) // exactly one licensed first name
+            .and_then(|firsts| {
+                if eligible.is_empty() {
+                    return None;
+                }
+                let first = firsts.iter().next().unwrap();
+                let full_key = format!("{first} {key}");
+                let full_cat = category_by_key.get(&full_key)?;
+                let eligible_cat =
+                    dominant_category(eligible.iter().map(|m| (m.category.as_str(), m.count)));
+                if eligible_cat.is_empty() || eligible_cat != *full_cat {
+                    return None; // no category match, or no category at all
+                }
+                Some(full_key)
+            });
+
+        match absorption_target {
+            Some(full_key) => {
+                merged.entry(full_key).or_default().extend(eligible);
+                if !ineligible.is_empty() {
+                    merged.entry(key).or_default().extend(ineligible);
+                }
+            }
+            None => {
+                let mut all = eligible;
+                all.extend(ineligible);
+                merged.entry(key).or_default().extend(all);
+            }
+        }
     }
 
     merged
@@ -287,7 +356,10 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
 mod tests {
     use super::*;
 
-    fn f(raw: &str, count: i64) -> Form { Form { raw: raw.to_string(), count } }
+    fn f(raw: &str, count: i64) -> Form { Form { raw: raw.to_string(), count, category: String::new() } }
+    fn fc(raw: &str, count: i64, cat: &str) -> Form {
+        Form { raw: raw.to_string(), count, category: cat.to_string() }
+    }
     fn by_key<'a>(ents: &'a [Entity], key: &str) -> &'a Entity {
         ents.iter().find(|e| e.key == key).unwrap_or_else(|| panic!("no entity {key}"))
     }
@@ -377,7 +449,12 @@ mod tests {
 
     #[test]
     fn grieg_forms_merge_into_one_entity() {
-        let ents = resolve(&[f("(Edvard) Grieg", 19), f("Edvard Grieg", 19), f("Grieg", 11), f("Edward Grieg", 2)]);
+        let ents = resolve(&[
+            fc("(Edvard) Grieg", 19, "Music & Performing Arts"),
+            fc("Edvard Grieg", 19, "Music & Performing Arts"),
+            fc("Grieg", 11, "Music & Performing Arts"),
+            fc("Edward Grieg", 2, "Music & Performing Arts"),
+        ]);
         let g = by_key(&ents, "edvard grieg");
         assert_eq!(g.display, "Edvard Grieg");
         assert_eq!(g.freq, 49);
@@ -388,7 +465,12 @@ mod tests {
 
     #[test]
     fn honorific_forms_merge_under_the_full_name() {
-        let ents = resolve(&[f("(Sir Edward) Elgar", 10), f("Sir Edward Elgar", 5), f("Edward Elgar", 8), f("Elgar", 5)]);
+        let ents = resolve(&[
+            fc("(Sir Edward) Elgar", 10, "Music & Performing Arts"),
+            fc("Sir Edward Elgar", 5, "Music & Performing Arts"),
+            fc("Edward Elgar", 8, "Music & Performing Arts"),
+            fc("Elgar", 5, "Music & Performing Arts"),
+        ]);
         assert_eq!(ents.len(), 1);
         assert_eq!(ents[0].key, "edward elgar");
         assert_eq!(ents[0].freq, 28);
@@ -397,7 +479,11 @@ mod tests {
 
     #[test]
     fn multiword_first_names_are_licensed_as_a_unit() {
-        let ents = resolve(&[f("(Ralph Waldo) Emerson", 30), f("Ralph Waldo Emerson", 40), f("Emerson", 12)]);
+        let ents = resolve(&[
+            fc("(Ralph Waldo) Emerson", 30, "Literature & Language"),
+            fc("Ralph Waldo Emerson", 40, "Literature & Language"),
+            fc("Emerson", 12, "Literature & Language"),
+        ]);
         assert_eq!(ents.len(), 1);
         assert_eq!(ents[0].key, "ralph waldo emerson");
         assert_eq!(ents[0].freq, 82);
@@ -405,7 +491,15 @@ mod tests {
 
     #[test]
     fn ambiguous_surname_never_absorbs_the_bare_form() {
-        let ents = resolve(&[f("(George) Washington", 40), f("George Washington", 200), f("(Denzel) Washington", 5), f("Denzel Washington", 30), f("Washington", 250)]);
+        // Same category throughout, so only guard (a) — the ambiguous
+        // license — is what keeps these apart.
+        let ents = resolve(&[
+            fc("(George) Washington", 40, "American History"),
+            fc("George Washington", 200, "American History"),
+            fc("(Denzel) Washington", 5, "American History"),
+            fc("Denzel Washington", 30, "American History"),
+            fc("Washington", 250, "American History"),
+        ]);
         assert_eq!(ents.len(), 3);
         assert_eq!(by_key(&ents, "washington").freq, 250);
         assert_eq!(by_key(&ents, "george washington").freq, 240);
@@ -413,17 +507,74 @@ mod tests {
     }
 
     #[test]
-    fn dominant_bare_form_stays_separate() {
-        // "(Jack) London" licenses jack, but London the city dominates.
-        let ents = resolve(&[f("London", 296), f("Jack London", 70), f("(Jack) London", 17)]);
+    fn place_stays_separate_from_person_by_category() {
+        // "(Jack) London" licenses jack, but the category differs: London
+        // the place vs. Jack London the author.
+        let ents = resolve(&[
+            fc("London", 296, "Geography & Exploration"),
+            fc("Jack London", 70, "Literature & Language"),
+            fc("(Jack) London", 17, "Literature & Language"),
+        ]);
         assert_eq!(ents.len(), 2);
         assert_eq!(by_key(&ents, "london").freq, 296);
         assert_eq!(by_key(&ents, "jack london").freq, 87);
-        // Beethoven: bare 150 > 60 + 20, so it stays separate too (a missed merge, never a wrong one).
-        let ents = resolve(&[f("(Ludwig van) Beethoven", 60), f("Beethoven", 150), f("Ludwig van Beethoven", 20)]);
+        // Beethoven: same category throughout, so the bare form (which used
+        // to dominate by count) absorbs into the full name — the guard is
+        // now category match, not count dominance.
+        let ents = resolve(&[
+            fc("(Ludwig van) Beethoven", 60, "Music & Performing Arts"),
+            fc("Beethoven", 150, "Music & Performing Arts"),
+            fc("Ludwig van Beethoven", 20, "Music & Performing Arts"),
+        ]);
+        assert_eq!(ents.len(), 1);
+        let b = by_key(&ents, "ludwig van beethoven");
+        assert_eq!(b.freq, 230);
+        assert_eq!(b.display, "Ludwig van Beethoven");
+        assert_eq!(b.forms[0], "Beethoven"); // forms sorted by count desc
+    }
+
+    #[test]
+    fn lowercase_and_article_forms_are_never_absorbed() {
+        let ents = resolve(&[
+            fc("Shirley Temple", 60, "Film, TV & Pop Culture"),
+            fc("(Shirley) Temple", 10, "Film, TV & Pop Culture"),
+            fc("Temple", 8, "Film, TV & Pop Culture"),
+            fc("temple", 12, "Philosophy, Religion & Society"),
+            fc("the temple", 5, "Philosophy, Religion & Society"),
+            fc("a temple", 3, "Philosophy, Religion & Society"),
+        ]);
         assert_eq!(ents.len(), 2);
-        assert_eq!(by_key(&ents, "ludwig van beethoven").display, "Ludwig van Beethoven");
-        assert_eq!(by_key(&ents, "ludwig van beethoven").forms[0], "(Ludwig van) Beethoven");
+        let shirley = by_key(&ents, "shirley temple");
+        assert_eq!(shirley.freq, 78);
+        assert!(shirley.forms.iter().any(|f| f == "Temple"));
+        let temple = by_key(&ents, "temple");
+        assert_eq!(temple.freq, 20);
+        assert_eq!(temple.display, "temple");
+        assert_eq!(temple.forms, vec!["temple", "the temple", "a temple"]);
+    }
+
+    #[test]
+    fn category_mismatch_blocks_absorption_even_when_rare() {
+        let ents = resolve(&[
+            fc("Hank Aaron", 90, "Sports & Games"),
+            fc("(Hank) Aaron", 10, "Sports & Games"),
+            fc("Aaron", 6, "Philosophy, Religion & Society"),
+        ]);
+        assert_eq!(ents.len(), 2);
+        assert_eq!(by_key(&ents, "hank aaron").freq, 100);
+        assert_eq!(by_key(&ents, "aaron").freq, 6);
+    }
+
+    #[test]
+    fn same_category_absorbs_even_when_bare_dominates() {
+        let ents = resolve(&[
+            fc("Chopin", 72, "Music & Performing Arts"),
+            fc("(Frederic) Chopin", 20, "Music & Performing Arts"),
+            fc("Frederic Chopin", 15, "Music & Performing Arts"),
+        ]);
+        assert_eq!(ents.len(), 1);
+        assert_eq!(ents[0].key, "frederic chopin");
+        assert_eq!(ents[0].freq, 107);
     }
 
     #[test]
@@ -437,7 +588,12 @@ mod tests {
 
     #[test]
     fn different_first_name_variants_do_not_merge() {
-        let ents = resolve(&[f("(Claude) Debussy", 20), f("Claude Debussy", 20), f("Claude-Achille Debussy", 1), f("Debussy", 3)]);
+        let ents = resolve(&[
+            fc("(Claude) Debussy", 20, "Music & Performing Arts"),
+            fc("Claude Debussy", 20, "Music & Performing Arts"),
+            fc("Claude-Achille Debussy", 1, "Music & Performing Arts"),
+            fc("Debussy", 3, "Music & Performing Arts"),
+        ]);
         assert_eq!(ents.len(), 2);
         assert_eq!(by_key(&ents, "claude debussy").freq, 43);
         assert_eq!(by_key(&ents, "claude-achille debussy").freq, 1);
