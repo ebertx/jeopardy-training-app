@@ -226,6 +226,20 @@ pub async fn suspend(
     Ok(Json(json!({ "suspended": body.suspended })))
 }
 
+use crate::hooks::{cap_for_coverage, pick_hook, HookExposure};
+
+/// An entity can be served when it has a labeled active hook or (transitional
+/// fallback, spec §5) legacy cue phrases. Alias `pa` = pavlov_answers.
+pub(crate) const DRILLABLE_SQL: &str = "(cardinality(pa.phrases) > 0 OR EXISTS (
+    SELECT 1 FROM pavlov_hooks h WHERE h.answer_id = pa.id AND h.status = 'active' AND h.cue IS NOT NULL))";
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ServedHook {
+    pub id: i32,
+    pub rank: i32,
+    pub cue: String,
+}
+
 #[derive(sqlx::FromRow)]
 struct DrillAnswerRow {
     id: i32,
@@ -235,7 +249,7 @@ struct DrillAnswerRow {
     meta_category: String,
 }
 
-fn drill_card_json(r: &DrillAnswerRow) -> Value {
+fn drill_card_json(r: &DrillAnswerRow, hook: Option<ServedHook>) -> Value {
     let phrases: Vec<Value> = r
         .phrases
         .iter()
@@ -243,9 +257,119 @@ fn drill_card_json(r: &DrillAnswerRow) -> Value {
         .map(|(text, tier)| json!({ "text": text, "tier": tier }))
         .collect();
     json!({
-        "answerId": r.id, "answerNorm": r.answer_norm,
-        "phrases": phrases, "category": r.meta_category,
+        "answerId": r.id, "answerNorm": r.answer_norm, "category": r.meta_category,
+        "phrases": phrases,
+        "hookId": hook.as_ref().map(|h| h.id),
+        "hookRank": hook.as_ref().map(|h| h.rank),
+        "cue": hook.as_ref().map(|h| h.cue.clone()),
     })
+}
+
+#[derive(sqlx::FromRow)]
+struct HookPickRow {
+    id: i32,
+    rank: i32,
+    cue: String,
+    seen: i64,
+    last_wrong: bool,
+}
+
+/// Spec §3 hook selection: fewest exposures → last wrong → rank.
+async fn served_hook(state: &Arc<AppState>, user_id: i32, answer_id: i32) -> Result<Option<ServedHook>, AppError> {
+    let rows: Vec<HookPickRow> = sqlx::query_as(
+        "SELECT h.id, h.rank, h.cue, COALESCE(e.n, 0) AS seen,
+                COALESCE(e.last_rating = 'wrong', false) AS last_wrong
+         FROM pavlov_hooks h
+         LEFT JOIN (
+           SELECT hook_id, count(*) AS n,
+                  (array_agg(rating ORDER BY reviewed_at DESC))[1] AS last_rating
+           FROM pavlov_reviews
+           WHERE user_id = $1 AND answer_id = $2 AND hook_id IS NOT NULL
+           GROUP BY hook_id
+         ) e ON e.hook_id = h.id
+         WHERE h.answer_id = $2 AND h.status = 'active' AND h.cue IS NOT NULL",
+    )
+    .bind(user_id)
+    .bind(answer_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let exposures: Vec<HookExposure> = rows
+        .iter()
+        .map(|r| HookExposure { id: r.id, rank: r.rank, seen: r.seen, last_wrong: r.last_wrong })
+        .collect();
+    Ok(pick_hook(&exposures)
+        .and_then(|id| rows.into_iter().find(|r| r.id == id))
+        .map(|r| ServedHook { id: r.id, rank: r.rank, cue: r.cue }))
+}
+
+/// Serve one card: pick its hook, shape the response.
+async fn serve_card(
+    state: &Arc<AppState>,
+    user_id: i32,
+    row: DrillAnswerRow,
+    is_new: bool,
+    due_count: i64,
+    new_remaining: i64,
+) -> Result<Json<Value>, AppError> {
+    let hook = served_hook(state, user_id, row.id).await?;
+    Ok(Json(json!({
+        "done": false, "isNew": is_new, "card": drill_card_json(&row, hook),
+        "dueCount": due_count, "newRemaining": new_remaining,
+    })))
+}
+
+#[derive(sqlx::FromRow)]
+struct HookMapRow {
+    id: i32,
+    rank: i32,
+    cue: String,
+    support: i32,
+    source: String,
+    seen: i64,
+    last_wrong_at: Option<DateTime<Utc>>,
+}
+
+/// The entity's display name, merged forms, and labeled active hooks with
+/// this user's exposure marks. Shared by drill_check and entity_by_question.
+pub(crate) async fn hook_map(
+    state: &Arc<AppState>,
+    user_id: i32,
+    answer_id: i32,
+) -> Result<(String, Vec<String>, Vec<Value>), AppError> {
+    let (answer, forms): (String, Vec<String>) =
+        sqlx::query_as("SELECT answer, forms FROM pavlov_answers WHERE id = $1")
+            .bind(answer_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("No such card".into()))?;
+    let rows: Vec<HookMapRow> = sqlx::query_as(
+        "SELECT h.id, h.rank, h.cue, h.support, h.source,
+                COALESCE(e.n, 0) AS seen, e.last_wrong_at
+         FROM pavlov_hooks h
+         LEFT JOIN (
+           SELECT hook_id, count(*) AS n,
+                  max(reviewed_at) FILTER (WHERE rating = 'wrong') AS last_wrong_at
+           FROM pavlov_reviews
+           WHERE user_id = $1 AND answer_id = $2 AND hook_id IS NOT NULL
+           GROUP BY hook_id
+         ) e ON e.hook_id = h.id
+         WHERE h.answer_id = $2 AND h.status = 'active' AND h.cue IS NOT NULL
+         ORDER BY h.rank, h.id",
+    )
+    .bind(user_id)
+    .bind(answer_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let hooks = rows
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id, "rank": r.rank, "cue": r.cue, "support": r.support, "source": r.source,
+                "seen": r.seen, "lastWrongAt": r.last_wrong_at,
+            })
+        })
+        .collect();
+    Ok((answer, forms, hooks))
 }
 
 /// The SELECT list every drill query shares.
@@ -261,10 +385,11 @@ async fn pick_new_card(
     state: &Arc<AppState>,
     user_id: i32,
 ) -> Result<Option<DrillAnswerRow>, AppError> {
-    let available: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT meta_category FROM pavlov_answers
-         WHERE id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)",
-    )
+    let available: Vec<(String,)> = sqlx::query_as(&format!(
+        "SELECT DISTINCT pa.meta_category FROM pavlov_answers pa
+         WHERE {DRILLABLE_SQL}
+           AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)"
+    ))
     .bind(user_id)
     .fetch_all(&state.pool)
     .await?;
@@ -280,23 +405,24 @@ async fn pick_new_card(
         None
     };
 
-    // Within the sampled category the deck is worked strictly high-value-first:
-    // the most frequently recurring unseen answer comes next (corpus count from
-    // migration 0014), cue strength breaks ties, id makes it deterministic.
+    // Within the sampled category: vetted (JBoard-named) entities first, then
+    // the most frequently recurring unseen entity (corpus count from migration
+    // 0014), cue strength breaks ties, id makes it deterministic.
     // Measured on the 2026-09-15 deck: the first 1,100 draws under this order
     // carry ~66% of the remaining frequency mass (uniform: 30%, proportional
     // race: 52%). Variety still comes from the category sampling above.
     let cols = drill_cols();
     let pick_in_cat = format!(
         "SELECT {cols} FROM pavlov_answers pa
-         WHERE pa.meta_category = $2
+         WHERE pa.meta_category = $2 AND {DRILLABLE_SQL}
            AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
-         ORDER BY pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
+         ORDER BY pa.vetted DESC, pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
     );
     let pick_any = format!(
         "SELECT {cols} FROM pavlov_answers pa
-         WHERE pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
-         ORDER BY pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
+         WHERE {DRILLABLE_SQL}
+           AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
+         ORDER BY pa.vetted DESC, pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
     );
 
     if let Some(cat) = picked_cat {
@@ -370,10 +496,7 @@ pub async fn drill_next(
 
     if want_new {
         if let Some(row) = pick_new_card(&state, user_id).await? {
-            return Ok(Json(json!({
-                "done": false, "isNew": true, "card": drill_card_json(&row),
-                "dueCount": due_count, "newRemaining": new_remaining,
-            })));
+            return serve_card(&state, user_id, row, true, due_count, new_remaining).await;
         }
     }
     if let Some(row) = sqlx::query_as::<_, DrillAnswerRow>(&fetch_due)
@@ -381,17 +504,11 @@ pub async fn drill_next(
         .fetch_optional(&state.pool)
         .await?
     {
-        return Ok(Json(json!({
-            "done": false, "isNew": false, "card": drill_card_json(&row),
-            "dueCount": due_count, "newRemaining": new_remaining,
-        })));
+        return serve_card(&state, user_id, row, false, due_count, new_remaining).await;
     }
     if new_remaining > 0 || extra {
         if let Some(row) = pick_new_card(&state, user_id).await? {
-            return Ok(Json(json!({
-                "done": false, "isNew": true, "card": drill_card_json(&row),
-                "dueCount": due_count, "newRemaining": new_remaining,
-            })));
+            return serve_card(&state, user_id, row, true, due_count, new_remaining).await;
         }
     }
 
@@ -410,10 +527,11 @@ pub async fn drill_next(
     .fetch_one(&state.pool)
     .await?;
     // Unseen cards still exist → the frontend can offer "Keep going".
-    let more_new_available: bool = sqlx::query_scalar(
+    let more_new_available: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM pavlov_answers pa
-         WHERE pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1))",
-    )
+         WHERE {DRILLABLE_SQL}
+           AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1))"
+    ))
     .bind(user_id)
     .fetch_one(&state.pool)
     .await?;
@@ -428,6 +546,7 @@ pub async fn drill_next(
 #[serde(rename_all = "camelCase")]
 pub struct CheckBody {
     pub answer_id: i32,
+    pub hook_id: Option<i32>,
     /// Optional: honesty-mode reveal sends no typed answer.
     pub typed: Option<String>,
 }
@@ -436,7 +555,7 @@ pub struct CheckBody {
 /// change (that's `grade`).
 pub async fn drill_check(
     State(state): State<Arc<AppState>>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Json(body): Json<CheckBody>,
 ) -> Result<Json<Value>, AppError> {
     let row: Option<(String, Vec<i32>, String)> = sqlx::query_as(
@@ -448,6 +567,23 @@ pub async fn drill_check(
     let (answer, example_ids, answer_norm) = row.ok_or_else(|| AppError::NotFound("No such cue".into()))?;
     let correct = body.typed.as_deref().map(|t| answer_match::is_correct(t, &answer));
 
+    let (_, forms, hooks) = hook_map(&state, auth.user_id, body.answer_id).await?;
+    let example_clue: Option<(String, Option<String>, Option<chrono::NaiveDate>)> = match body.hook_id {
+        Some(hid) => {
+            sqlx::query_as(
+                "SELECT coalesce(jq.answer, ''), jq.category, jq.air_date
+                 FROM pavlov_hooks h JOIN jeopardy_questions jq ON jq.id = ANY(h.clue_ids)
+                 WHERE h.id = $1 AND h.answer_id = $2
+                 ORDER BY jq.air_date DESC NULLS LAST LIMIT 1",
+            )
+            .bind(hid)
+            .bind(body.answer_id)
+            .fetch_optional(&state.pool)
+            .await?
+        }
+        None => None,
+    };
+
     let examples: Vec<(String, Option<String>, Option<chrono::NaiveDate>)> = sqlx::query_as(
         "SELECT coalesce(answer, ''), category, air_date FROM jeopardy_questions
          WHERE id = ANY($1) ORDER BY air_date DESC",
@@ -455,14 +591,14 @@ pub async fn drill_check(
     .bind(&example_ids[..])
     .fetch_all(&state.pool)
     .await?;
-    let examples: Vec<Value> = examples
-        .into_iter()
-        .map(|(clue, category, air_date)| {
-            json!({ "clue": clue, "category": category, "airDate": air_date })
-        })
-        .collect();
+    let ex_json = |(clue, category, air_date): (String, Option<String>, Option<chrono::NaiveDate>)| {
+        json!({ "clue": clue, "category": category, "airDate": air_date })
+    };
     Ok(Json(json!({
-        "correct": correct, "answer": answer, "answerNorm": answer_norm, "examples": examples,
+        "correct": correct, "answer": answer, "answerNorm": answer_norm, "forms": forms,
+        "hooks": hooks, "servedHookId": body.hook_id,
+        "exampleClue": example_clue.map(ex_json),
+        "examples": examples.into_iter().map(ex_json).collect::<Vec<_>>(),
     })))
 }
 
@@ -471,6 +607,7 @@ pub async fn drill_check(
 pub struct DrillGradeBody {
     pub answer_id: i32,
     pub rating: String,
+    pub hook_id: Option<i32>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -502,6 +639,20 @@ pub async fn drill_grade(
     let rating = Rating::from_wire(&body.rating)
         .ok_or_else(|| AppError::BadRequest("rating must be wrong|got_it|too_easy".into()))?;
 
+    // A served hook must belong to the graded entity.
+    if let Some(hid) = body.hook_id {
+        let ok: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pavlov_hooks WHERE id = $1 AND answer_id = $2)",
+        )
+        .bind(hid)
+        .bind(body.answer_id)
+        .fetch_one(&state.pool)
+        .await?;
+        if !ok {
+            return Err(AppError::BadRequest("hookId does not belong to answerId".into()));
+        }
+    }
+
     let mut tx = state.pool.begin().await?;
 
     let existing: Option<PavlovCardRow> = sqlx::query_as(
@@ -523,8 +674,24 @@ pub async fn drill_grade(
     });
 
     let out = schedule(prev, rating);
+
+    // Coverage guard (spec §3): while a labeled hook other than the one just
+    // served is still unseen by this user, cap the interval.
+    let has_unseen: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM pavlov_hooks h
+           WHERE h.answer_id = $2 AND h.status = 'active' AND h.cue IS NOT NULL
+             AND h.id <> COALESCE($3, -1)
+             AND NOT EXISTS (SELECT 1 FROM pavlov_reviews r WHERE r.user_id = $1 AND r.hook_id = h.id))",
+    )
+    .bind(user_id)
+    .bind(body.answer_id)
+    .bind(body.hook_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let (interval_days, interval_secs) = cap_for_coverage(out.interval_days, out.interval_secs, has_unseen);
     let now: DateTime<Utc> = Utc::now();
-    let due = now + Duration::seconds(out.interval_secs);
+    let due = now + Duration::seconds(interval_secs);
     let suspended = out.lapses >= LEECH_LAPSES;
 
     sqlx::query(
@@ -545,7 +712,7 @@ pub async fn drill_grade(
     .bind(user_id)
     .bind(body.answer_id)
     .bind(out.state.as_str())
-    .bind(out.interval_days)
+    .bind(interval_days)
     .bind(out.ease)
     .bind(due)
     .bind(now)
@@ -559,14 +726,15 @@ pub async fn drill_grade(
     // Per-grade log — the dashboard's only source for accuracy over time.
     // `body.rating` was validated by Rating::from_wire above.
     sqlx::query(
-        "INSERT INTO pavlov_reviews (user_id, answer_id, rating, first_grade, reviewed_at)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO pavlov_reviews (user_id, answer_id, rating, first_grade, reviewed_at, hook_id)
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(user_id)
     .bind(body.answer_id)
     .bind(&body.rating)
     .bind(first_grade)
     .bind(now)
+    .bind(body.hook_id)
     .execute(&mut *tx)
     .await?;
 
@@ -575,14 +743,14 @@ pub async fn drill_grade(
     Ok(Json(json!({
         "state": out.state.as_str(),
         "due": due,
-        "intervalDays": out.interval_days,
+        "intervalDays": interval_days,
         "requeueInSession": out.requeue_in_session,
     })))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_first_grade, PavlovCardRow};
+    use super::{drill_card_json, is_first_grade, DrillAnswerRow, PavlovCardRow, ServedHook};
     use chrono::Utc;
 
     fn row(last_review: Option<chrono::DateTime<Utc>>) -> PavlovCardRow {
@@ -612,5 +780,20 @@ mod tests {
     #[test]
     fn previously_graded_card_is_not_first_grade() {
         assert!(!is_first_grade(Some(&row(Some(Utc::now())))));
+    }
+
+    #[test]
+    fn card_json_carries_hook_or_falls_back_to_phrases() {
+        let row = DrillAnswerRow {
+            id: 7, answer_norm: "visigoths".into(),
+            phrases: vec!["the Goths split".into()], phrase_tiers: vec!["standard".into()],
+            meta_category: "History & Politics".into(),
+        };
+        let with = drill_card_json(&row, Some(ServedHook { id: 3, rank: 2, cue: "ruled Spain until 711".into() }));
+        assert_eq!(with["hookId"], 3);
+        assert_eq!(with["cue"], "ruled Spain until 711");
+        let without = drill_card_json(&row, None);
+        assert!(without["hookId"].is_null());
+        assert_eq!(without["phrases"][0]["text"], "the Goths split");
     }
 }

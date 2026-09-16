@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Hooks: an entity's clue angles, mined from its own clues (spec §2), plus
 //! the pure drill helpers (spec §3). No DB here — `objects.rs` feeds it.
 
