@@ -9,6 +9,7 @@ mod srs;
 mod adaptive;
 mod activity;
 mod blend;
+mod entity;
 mod pavlov;
 mod pavlov_stats;
 mod insights;
