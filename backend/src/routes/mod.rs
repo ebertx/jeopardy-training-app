@@ -16,4 +16,5 @@ pub mod preferences;
 pub mod primers;
 pub mod questions;
 pub mod quiz;
+pub mod sheet;
 pub mod stats;

@@ -3,6 +3,9 @@
 
 use serde::Serialize;
 use serde_json::Value;
+use std::sync::Arc;
+use crate::error::AppError;
+use crate::AppState;
 
 pub const SHEET_MODEL: &str = "gpt-4o-mini";
 
@@ -133,6 +136,175 @@ pub fn sample_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
 
 pub fn sheet_json(s: &SheetContent) -> Value {
     serde_json::json!({ "identity": s.identity, "facts": s.facts })
+}
+
+#[derive(sqlx::FromRow)]
+struct ParentRow {
+    answer: String,
+    meta_category: String,
+    phrases: Vec<String>,
+}
+
+#[derive(sqlx::FromRow, Clone)]
+struct ClueRow {
+    clue: Option<String>,
+    response: Option<String>,
+    category: Option<String>,
+    classifier_category: Option<String>,
+    year: Option<i32>,
+}
+
+/// Cached-or-generate. Ok(None) when the key is unconfigured, the answer has
+/// no clues in the corpus, or the LLM output failed validation. Single-flight
+/// per answer_norm, same shape as insights::ensure_insight.
+pub async fn ensure_sheet(
+    state: &Arc<AppState>,
+    answer_norm: &str,
+) -> Result<Option<SheetContent>, AppError> {
+    if let Some(c) = read_cached(state, answer_norm).await? {
+        return Ok(Some(c));
+    }
+    if state.config.openai_api_key.is_empty() {
+        return Ok(None);
+    }
+    {
+        let mut inflight = state.sheet_inflight.lock().await;
+        if !inflight.insert(answer_norm.to_string()) {
+            drop(inflight);
+            for _ in 0..20 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if let Some(c) = read_cached(state, answer_norm).await? {
+                    return Ok(Some(c));
+                }
+            }
+            return Ok(None);
+        }
+    }
+    let result = generate_and_store(state, answer_norm).await;
+    state.sheet_inflight.lock().await.remove(answer_norm);
+    result
+}
+
+/// Fire-and-forget warm-up (used by drill_next so the sheet is ready by reveal).
+pub fn pregenerate_sheet(state: &Arc<AppState>, answer_norm: String) {
+    if state.config.openai_api_key.is_empty() {
+        return;
+    }
+    let st = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = ensure_sheet(&st, &answer_norm).await {
+            tracing::warn!("sheet pregeneration failed for {answer_norm}: {e:?}");
+        }
+    });
+}
+
+/// Display answer for a norm: the Pavlov deck's display form when present.
+pub async fn display_answer(state: &Arc<AppState>, answer_norm: &str) -> Result<Option<String>, AppError> {
+    let s: Option<String> = sqlx::query_scalar(
+        "SELECT answer FROM answer_sheets WHERE answer_norm = $1",
+    )
+    .bind(answer_norm)
+    .fetch_optional(&state.pool)
+    .await?;
+    Ok(s)
+}
+
+/// True when the user already holds all four fact cards for this answer.
+pub async fn facts_added(state: &Arc<AppState>, user_id: i32, answer_norm: &str) -> Result<bool, AppError> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pavlov_cards ca
+         JOIN pavlov_answers pa ON pa.id = ca.answer_id
+         WHERE ca.user_id = $1 AND pa.kind = 'fact' AND pa.parent_norm = $2",
+    )
+    .bind(user_id)
+    .bind(answer_norm)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(n >= 4)
+}
+
+async fn read_cached(state: &Arc<AppState>, answer_norm: &str) -> Result<Option<SheetContent>, AppError> {
+    let row: Option<(Value,)> =
+        sqlx::query_as("SELECT content FROM answer_sheets WHERE answer_norm = $1")
+            .bind(answer_norm)
+            .fetch_optional(&state.pool)
+            .await?;
+    Ok(row.and_then(|(v,)| parse_sheet(&v, answer_norm).ok()))
+}
+
+async fn generate_and_store(
+    state: &Arc<AppState>,
+    answer_norm: &str,
+) -> Result<Option<SheetContent>, AppError> {
+    // Up to 15 clues spread across air dates; the norm join uses the same
+    // expression as idx_jq_answer_norm so it is index-backed.
+    let all: Vec<ClueRow> = sqlx::query_as(
+        "SELECT answer AS clue, question AS response, category, classifier_category,
+                EXTRACT(year FROM air_date)::int AS year
+         FROM jeopardy_questions
+         WHERE lower(trim(regexp_replace(question, '^(the|a|an) ', '', 'i'))) = $1
+           AND archived = false AND answer IS NOT NULL AND question IS NOT NULL
+         ORDER BY air_date",
+    )
+    .bind(answer_norm)
+    .fetch_all(&state.pool)
+    .await?;
+    if all.is_empty() {
+        return Ok(None);
+    }
+    let picked = sample_evenly(&all, 15);
+
+    let parent: Option<ParentRow> = sqlx::query_as(
+        "SELECT answer, meta_category, phrases FROM pavlov_answers
+         WHERE answer_norm = $1 AND kind = 'answer'",
+    )
+    .bind(answer_norm)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (answer, category, phrases) = match parent {
+        Some(p) => (p.answer, p.meta_category, p.phrases),
+        None => (
+            all[all.len() - 1].response.clone().unwrap_or_else(|| answer_norm.to_string()),
+            all[all.len() - 1].classifier_category.clone().unwrap_or_else(|| "Miscellaneous".to_string()),
+            vec![],
+        ),
+    };
+    let clues: Vec<GroundingClue> = picked
+        .into_iter()
+        .map(|c| GroundingClue {
+            clue: c.clue.unwrap_or_default(),
+            category: c.category.unwrap_or_else(|| "UNKNOWN".to_string()),
+            year: c.year,
+        })
+        .collect();
+
+    let user = sheet_user_prompt(&answer, &category, &phrases, &clues);
+    let v = crate::openai::chat_json(
+        &state.config.openai_api_key,
+        SHEET_MODEL,
+        SHEET_SYSTEM_PROMPT,
+        &user,
+        0.4,
+    )
+    .await?;
+    let content = match parse_sheet(&v, answer_norm) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("sheet rejected for {answer_norm}: {e}");
+            return Ok(None);
+        }
+    };
+    sqlx::query(
+        "INSERT INTO answer_sheets (answer_norm, answer, content, model) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (answer_norm) DO NOTHING",
+    )
+    .bind(answer_norm)
+    .bind(&answer)
+    .bind(sheet_json(&content))
+    .bind(SHEET_MODEL)
+    .execute(&state.pool)
+    .await?;
+    Ok(Some(content))
 }
 
 #[cfg(test)]

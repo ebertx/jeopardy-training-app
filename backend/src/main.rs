@@ -29,6 +29,7 @@ pub struct AppState {
     pub insight_inflight: tokio::sync::Mutex<std::collections::HashSet<i32>>,
     pub blindspot_inflight: std::sync::atomic::AtomicBool,
     pub pavlov_inflight: std::sync::atomic::AtomicBool,
+    pub sheet_inflight: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 fn main() {
@@ -67,6 +68,7 @@ async fn run() {
         insight_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         blindspot_inflight: std::sync::atomic::AtomicBool::new(false),
         pavlov_inflight: std::sync::atomic::AtomicBool::new(false),
+        sheet_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
     });
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
@@ -86,6 +88,8 @@ async fn run() {
         .route("/api/practice/next", get(routes::practice::next))
         .route("/api/practice/status", get(routes::practice::status))
         .route("/api/insight/{id}", get(routes::insight::get_insight))
+        .route("/api/sheet/answer/{norm}", get(routes::sheet::by_answer))
+        .route("/api/sheet/question/{id}", get(routes::sheet::by_question))
         .route("/api/cards", get(routes::cards::list))
         .route("/api/drill/next", get(routes::drill::next))
         .route("/api/mastery/reset", post(routes::mastery::reset))
