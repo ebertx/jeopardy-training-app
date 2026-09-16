@@ -11,8 +11,8 @@ CREATE TEMP TABLE vetted_pairs (cue TEXT, response TEXT, domain TEXT, source_url
 \copy vetted_pairs FROM '/data/pavlovs-jboard.tsv' WITH (FORMAT text, HEADER)
 WITH keyed AS (
   SELECT response,
-         lower(trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(response,
-           '\([^)]*\)', '', 'g'), '"[^"]*"', '', 'g'), '\s+', ' ', 'g'), '^(the|a|an) ', '', 'i'))) AS key
+         lower(trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(response,
+           '\([^)]*\)', '', 'g'), '"[^"]*"', '', 'g'), '\s+', ' ', 'g'), '^\s*(sir|dame) ', '', 'i'), '^(the|a|an) ', '', 'i'))) AS key
   FROM vetted_pairs
 ), resolved AS (
   SELECT k.response, k.key,
@@ -31,8 +31,8 @@ FROM resolved;
 SELECT response, key FROM (
   SELECT k.response, k.key, (SELECT 1 FROM jeopardy_questions jq WHERE jq.archived = false
      AND (jq.entity_norm = k.key OR lower(trim(regexp_replace(jq.question, '^(the|a|an) ', '', 'i'))) = k.key) LIMIT 1) AS hit
-  FROM (SELECT response, lower(trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(response,
-           '\([^)]*\)', '', 'g'), '"[^"]*"', '', 'g'), '\s+', ' ', 'g'), '^(the|a|an) ', '', 'i'))) AS key FROM vetted_pairs) k
+  FROM (SELECT response, lower(trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(response,
+           '\([^)]*\)', '', 'g'), '"[^"]*"', '', 'g'), '\s+', ' ', 'g'), '^\s*(sir|dame) ', '', 'i'), '^(the|a|an) ', '', 'i'))) AS key FROM vetted_pairs) k
 ) u WHERE hit IS NULL ORDER BY response;
 
 -- C. The 50 highest-frequency merges, for hand review of false positives.
