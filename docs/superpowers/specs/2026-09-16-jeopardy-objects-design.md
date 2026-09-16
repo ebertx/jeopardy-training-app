@@ -74,12 +74,18 @@ Applied to `jeopardy_questions.question` (the response) for every clue with
    normalisation. "(Edvard) Grieg" and "Edvard Grieg" → `edvard grieg`;
    "Grieg" → `grieg`. A response that strips to nothing (or a bare article)
    keeps its plain string norm as its key.
-3. **Bare-surname absorption, two guards.** A single-token key `s` is
-   absorbed into `f s` only when exactly ONE first name `f` is licensed for
-   `s` by some "(F) S" form, AND the bare form is not the dominant usage
-   (`count(s) ≤ Σ count(forms keyed f s)`). Grieg (11 ≤ 38) merges; London
-   (296 > 87) stays the city; Beethoven (150 > 80) stays split from Ludwig
-   van Beethoven — a missed merge, never a wrong one.
+3. **Bare-surname absorption, three guards** (amended again after the
+   first live Resolve run: a count-dominance guard both let lowercase
+   homonyms through — Shirley Temple absorbed "temple", Henry Clay "clay" —
+   and blocked the Beethoven class). A single-token key `s` is absorbed into
+   `f s` only when (a) exactly ONE first name `f` is licensed for `s` by some
+   "(F) S" form; (b) the count-weighted dominant category of `s` equals that
+   of `f s` and is non-empty (London: Geography ≠ Jack London: Literature →
+   separate; Beethoven and Ludwig van Beethoven: both Music → merge); and
+   (c) only eligible forms move — a single token, capitalised, with no
+   leading article, parenthesis or quote. "Temple" joins Shirley Temple;
+   "temple", "the temple" and "a Caesar" stay their own entity. Each form
+   carries the dominant `classifier_category` of its clues for guard (b).
 4. **Display** = the most frequent stripped form among the forms whose own
    key equals the entity key ("France", not "the France"; "Sir Edward Elgar"
    because the honorific forms outnumber "Edward Elgar"). Frequency = the
