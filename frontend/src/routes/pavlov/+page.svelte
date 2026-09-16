@@ -29,7 +29,6 @@
   let extraMode = $state(false); // past-allowance drilling; resets on reload
   let result = $state<{
     answer: string;
-    answerNorm: string;
     kind: 'answer' | 'fact';
     parent: string | null;
     examples: Array<{ clue: string; category: string | null; airDate: string | null }>;
@@ -303,9 +302,16 @@
               {/if}
               <p class="text-gray-900 font-bold text-xl">{result.answer}</p>
             </div>
+            {#snippet sheetPanel()}
+              {#if !sheetLoading && sheet === null}
+                <p class="text-white/50 text-sm text-center">No answer sheet for this one.</p>
+              {:else}
+                <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} {addedNow} onAddFacts={addFacts} />
+              {/if}
+            {/snippet}
             {#if paused}
               <div class="flex flex-col gap-3">
-                <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} {addedNow} onAddFacts={addFacts} />
+                {@render sheetPanel()}
                 <button
                   onclick={advance}
                   class="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold text-lg transition-colors"
@@ -327,11 +333,7 @@
               {#if result.kind === 'answer'}
                 {#if sheetOpen}
                   <div class="mt-3">
-                    {#if !sheetLoading && sheet === null}
-                      <p class="text-white/50 text-sm text-center mt-3">No answer sheet for this one.</p>
-                    {:else}
-                      <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} {addedNow} onAddFacts={addFacts} />
-                    {/if}
+                    {@render sheetPanel()}
                   </div>
                 {:else}
                   <button onclick={toggleSheet} class="mt-3 w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/80 text-sm font-medium transition-colors">

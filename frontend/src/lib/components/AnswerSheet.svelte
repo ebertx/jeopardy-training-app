@@ -1,7 +1,6 @@
 <script lang="ts" module>
   export interface Sheet {
     answerNorm: string;
-    answer: string;
     identity: string;
     facts: Array<{ prompt: string; response: string }>;
     factsAdded: boolean;
