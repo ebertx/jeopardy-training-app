@@ -157,9 +157,12 @@ Input: the entity's clues (via `entity_norm`) and their grams in
   (`HOOK_MAX_PER_ENTITY`), dropped below 2 members (`HOOK_MIN_SUPPORT`).
   Clues matching no cluster form no hook. An entity with one cluster is a
   one-hook card, which is what every card is today.
-- **Identity:** `(answer_id, key_gram)`, key gram = the cluster's most
-  distinctive gram (lowest corpus frequency, ties by support). Regeneration
-  upserts on it so hook ids, and therefore exposure history, survive reruns.
+- **Identity:** `(answer_id, key_gram)`, key gram = the cluster's gram with
+  the highest support × idf (ties alphabetically first; amended during
+  execution from "lowest corpus frequency" — a gram that recurs across the
+  angle's clues is a more stable identity than a one-off rare term).
+  Regeneration upserts on it so hook ids, and therefore exposure history,
+  survive reruns.
 
 ### Labels (priority order)
 
@@ -233,7 +236,7 @@ batched 20 per gpt-4o-mini call. A few dollars, run once.
 | route | change |
 |---|---|
 | `drill_next` | response gains `hookId`, `hookRank`; the `cue` is the hook's cue (or legacy phrases when falling back) |
-| `drill_check` | reveal gains `entity {answer, forms}`, `hooks [{id, rank, cue, support, seen, lastWrongAt}]`, `servedHookId`, `exampleClue {clue, category, year}` |
+| `drill_check` | reveal gains `forms` (flat, beside the existing `answer`), `hooks [{id, rank, cue, support, source, seen, lastWrongAt}]`, `servedHookId`, `exampleClue {clue, category, airDate}` |
 | `drill_grade` | request gains `hookId` (nullable); `factsAdded` removed |
 | `POST /api/pavlov/hooks/{id}/drop`, `/restore` | curation |
 | `GET /api/pavlov/answers` | rows gain `forms`, `vetted`, `hooks[...]` incl. unlabeled and dropped |
