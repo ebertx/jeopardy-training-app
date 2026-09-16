@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::pavlov::{phrase_leaks_answer, trim_scaffolding};
+use crate::pavlov::{norm_tokens, phrase_leaks_answer, trim_scaffolding};
 
 pub const HOOK_MIN_SUPPORT: i64 = 2;
 pub const HOOK_MAX_PER_ENTITY: usize = 8;
@@ -287,22 +287,14 @@ verbatim), \"key_gram\": string (echoed verbatim), \"keep\": boolean, \"cue\": s
     (system, user)
 }
 
-fn tokens(s: &str) -> Vec<String> {
-    s.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(|w| w.to_string())
-        .collect()
-}
-
 /// Every content token (≥ 4 chars) of `cue` appears as a token of some clue.
 pub fn label_grounded(cue: &str, clues: &[String]) -> bool {
-    let cue_toks = tokens(cue);
+    let cue_toks = norm_tokens(cue);
     if cue_toks.is_empty() {
         return false;
     }
-    let clue_toks: std::collections::HashSet<String> = clues.iter().flat_map(|c| tokens(c)).collect();
-    cue_toks.iter().filter(|t| t.len() >= 4).all(|t| clue_toks.contains(t))
+    let clue_toks: std::collections::HashSet<String> = clues.iter().flat_map(|c| norm_tokens(c)).collect();
+    cue_toks.iter().filter(|t| t.chars().count() >= 4).all(|t| clue_toks.contains(t))
 }
 
 /// Lenient parse; every gate from the spec applied. Items with no matching
@@ -329,7 +321,7 @@ pub fn parse_hook_labels(v: &Value, inputs: &[HookLabelInput]) -> Vec<HookLabelO
             let cue = trim_scaffolding(&raw);
             let keep = item.get("keep").and_then(|k| k.as_bool()).unwrap_or(true);
             let words = cue.split_whitespace().count();
-            let hedged = tokens(&cue).iter().any(|t| HEDGES.contains(&t.as_str()));
+            let hedged = norm_tokens(&cue).iter().any(|t| HEDGES.contains(&t.as_str()));
             let ok = keep
                 && !cue.is_empty()
                 && words <= MAX_LABEL_WORDS
