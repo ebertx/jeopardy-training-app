@@ -10,6 +10,7 @@ mod adaptive;
 mod blend;
 mod pavlov;
 mod pavlov_stats;
+mod sheets;
 mod insights;
 mod openai;
 mod routes;
