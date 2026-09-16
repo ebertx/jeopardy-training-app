@@ -43,11 +43,34 @@ const routes = {
   '/api/blindspots': { configured: true, insufficientData: false, packs: [
     { id: 1, theme: 'Mythology', diagnosis: '' }, { id: 2, theme: 'Opera', diagnosis: '' }, { id: 3, theme: 'Fine Arts', diagnosis: '' } ] },
   '/api/activity': { streak: 3, activeLast28: 11, days: Array.from({ length: 28 }, (_, i) => ({ date: isoDay(i - 27), active: [5, 6, 8, 12, 13, 16, 19, 20, 25, 26, 27].includes(i) })) },
-  '/api/pavlov/drill/next': { done: false, isNew: false, dueCount: 124, newRemaining: 40, card: { answerId: 1, answerNorm: 'wuthering heights', kind: 'answer', parent: null, category: 'Literature & Language', phrases: [{ text: 'Heathcliff', tier: 'standard' }, { text: 'Yorkshire moors', tier: 'hint' }] } },
-  '/api/pavlov/drill/check': { correct: null, answer: 'Wuthering Heights', answerNorm: 'wuthering heights', kind: 'answer', parent: null, examples: [{ clue: 'Heathcliff seeks revenge in this Emily Brontë novel', category: 'NOVELS', airDate: '2019-03-04' }] },
-  '/api/pavlov/drill/grade': { state: 'learning', due: new Date().toISOString(), intervalDays: 0, requeueInSession: true, factsAdded: 0 },
-  '/api/pavlov/facts': { added: 4 },
-  '/api/sheet/answer/wuthering%20heights': { answerNorm: 'wuthering heights', answer: 'Wuthering Heights', identity: "Emily Brontë's only novel (1847): Heathcliff and Catherine's doomed love on the Yorkshire moors.", facts: [{ prompt: 'author', response: 'Emily Brontë' }, { prompt: 'antihero', response: 'Heathcliff' }, { prompt: 'narrator', response: 'Nelly Dean' }, { prompt: 'year published', response: '1847' }], factsAdded: false },
+  '/api/pavlov/drill/next': { done: false, isNew: false, dueCount: 124, newRemaining: 40, card: { answerId: 1, answerNorm: 'visigoths', category: 'History & Politics', phrases: [], hookId: 3, hookRank: 3, cue: 'ruled Spain from Toledo until 711' } },
+  '/api/pavlov/drill/check': { correct: null, answer: 'the Visigoths', answerNorm: 'visigoths', forms: ['the Visigoths', 'Visigoths'], servedHookId: 3,
+    hooks: [
+      { id: 1, rank: 1, cue: 'split from the Ostrogoths, "western" Goths', support: 9, source: 'cue', seen: 2, lastWrongAt: null },
+      { id: 2, rank: 2, cue: 'Alaric sacks Rome, 410', support: 5, source: 'cue', seen: 1, lastWrongAt: isoDay(-1) + 'T18:00:00Z' },
+      { id: 3, rank: 3, cue: 'ruled Spain from Toledo until 711', support: 6, source: 'model', seen: 0, lastWrongAt: null },
+      { id: 4, rank: 4, cue: 'Alaric II · Vouillé · Franks, 507', support: 2, source: 'model', seen: 0, lastWrongAt: null },
+    ],
+    exampleClue: { clue: 'In 711 a Muslim army defeated Roderick, the last king of these people in Spain', category: 'VICTORY IS OURS', airDate: '2004-09-24' },
+    examples: [] },
+  '/api/pavlov/drill/grade': { state: 'learning', due: new Date().toISOString(), intervalDays: 0, requeueInSession: true },
+  '/api/pavlov/hooks/3/drop': { status: 'dropped' },
+  '/api/pavlov/entity/question/1': { answerId: 1, answer: 'the Visigoths', forms: ['the Visigoths', 'Visigoths'], hooks: [
+      { id: 1, rank: 1, cue: 'split from the Ostrogoths, "western" Goths', support: 9, source: 'cue', seen: 2, lastWrongAt: null },
+      { id: 3, rank: 3, cue: 'ruled Spain from Toledo until 711', support: 6, source: 'model', seen: 0, lastWrongAt: null } ] },
+  '/api/pavlov/answers': { answers: [
+    { id: 1, answer: 'the Visigoths', category: 'History & Politics', forms: ['the Visigoths', 'Visigoths'], vetted: false, suspended: false, phrases: [],
+      hooks: [ { id: 1, rank: 1, cue: 'split from the Ostrogoths, "western" Goths', keyGram: 'ostrogoth', support: 9, source: 'cue', status: 'active' },
+               { id: 3, rank: 3, cue: 'ruled Spain from Toledo until 711', keyGram: '711', support: 6, source: 'model', status: 'active' },
+               { id: 5, rank: 5, cue: null, keyGram: 'roman', support: 2, source: 'mined', status: 'active' } ] },
+    { id: 2, answer: 'Jean Sibelius', category: 'Music & Performing Arts', forms: ['(Jean) Sibelius', 'Jean Sibelius', 'Sibelius'], vetted: true, suspended: false, phrases: [],
+      hooks: [ { id: 7, rank: 1, cue: 'Finnish composer of "Finlandia"', keyGram: 'finlandia', support: 21, source: 'both', status: 'active' } ] },
+  ] },
+  '/api/pavlov/hooks/1': { id: 1, cue: 'split from the Ostrogoths, "western" Goths', keyGram: 'ostrogoth', grams: ['ostrogoth', 'goth split'], examples: [ { clue: 'Circa 370 A.D., the Goths split into 2 tribes, the Ostrogoths & these people', category: 'ANCIENT TIMES', airDate: '1987-10-14' } ] },
+  '/api/pavlov/hooks/3': { id: 3, cue: 'ruled Spain from Toledo until 711', keyGram: '711', grams: ['711', 'spain'], examples: [ { clue: 'In 711 a Muslim army defeated Roderick, the last king of these people in Spain', category: 'VICTORY IS OURS', airDate: '2004-09-24' } ] },
+  '/api/pavlov/hooks/5': { id: 5, cue: null, keyGram: 'roman', grams: ['roman'], examples: [] },
+  '/api/pavlov/hooks/7': { id: 7, cue: 'Finnish composer of "Finlandia"', keyGram: 'finlandia', grams: ['finlandia', 'finnish compos'], examples: [] },
+  '/api/admin/pavlov/status': { running: false, pending: 0, active: 13062, dropped: 900, hooks: { total: 14200, labeled: 13100, unlabeled: 1100, vetted: 610, entitiesPending: 0 } },
   '/api/stats': {
     overall: kind(4321, 3300), cold: kind(2100, 1050), review: kind(2221, 1800), cold30d: kind(220, 118),
     mockReadiness: { tests: [{ id: 1, completedAt: '2026-07-20T00:00:00Z', score: 18 }, { id: 2, completedAt: '2026-07-23T00:00:00Z', score: 21 }], best: 21, latest: 21, passLine: 35 },
@@ -66,14 +89,14 @@ const routes = {
         overall: kind(0, 0), cold: kind(0, 0), review: kind(0, 0), cold30d: kind(0, 0), historySince: null,
         dailyAccuracy: [], categoryBreakdown: [], reviewedToday: 0, dueCount: 124, newRemaining: 40, forecast: forecast(30),
         deck: { learning: 24, maturing: 402, mastered: 585, struggling: 0, banished: 86, total: 1097, delta: null },
-        progress: { deckTotal: 4765, touched: 1097, touchedPct: 23.02, trailingPerDay: 11, targetDate: '2026-12-31', daysLeft: 108, requiredPerDay: 34, pastTarget: false, projectedFinish: '2027-08-15', daysAhead: -226 },
+        progress: { deckTotal: 4765, touched: 1097, touchedPct: 23.02, trailingPerDay: 11, targetDate: '2026-12-31', daysLeft: 108, requiredPerDay: 34, pastTarget: false, projectedFinish: '2027-08-15', daysAhead: -226, hooksSeen: 0, hooksTotal: 0 },
       }
     : {
         overall: kind(1200, 960), cold: kind(400, 180), review: kind(800, 780), cold30d: kind(400, 180), historySince: '2026-09-16T04:00:00Z',
         dailyAccuracy: daily(12), categoryBreakdown: CATS.map((c) => split(c, 90, 70, 30, 60, 55)),
         reviewedToday: 96, dueCount: 124, newRemaining: 40, forecast: forecast(30),
         deck: { learning: 24, maturing: 402, mastered: 585, struggling: 3, banished: 86, total: 1100, delta: { since: isoDay(-7), learning: -10, maturing: 40, mastered: 55, struggling: 1 } },
-        progress: { deckTotal: 4765, touched: 1100, touchedPct: 23.08, trailingPerDay: 36, targetDate: '2026-12-31', daysLeft: 108, requiredPerDay: 34, pastTarget: false, projectedFinish: '2026-12-26', daysAhead: 6 },
+        progress: { deckTotal: 4765, touched: 1100, touchedPct: 23.08, trailingPerDay: 36, targetDate: '2026-12-31', daysLeft: 108, requiredPerDay: 34, pastTarget: false, projectedFinish: '2026-12-26', daysAhead: 6, hooksSeen: 1830, hooksTotal: 3400 },
       },
 };
 

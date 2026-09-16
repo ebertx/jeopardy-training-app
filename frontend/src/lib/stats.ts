@@ -68,6 +68,8 @@ export interface PavlovProgress {
   pastTarget: boolean;
   projectedFinish: string | null;
   daysAhead: number | null;
+  hooksSeen: number;
+  hooksTotal: number;
 }
 
 export interface PavlovStats {

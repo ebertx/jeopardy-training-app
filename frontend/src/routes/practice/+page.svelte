@@ -8,7 +8,7 @@
   import SessionSummary from '$lib/components/SessionSummary.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import CountdownTimer from '$lib/components/CountdownTimer.svelte';
-  import AnswerSheet, { type Sheet } from '$lib/components/AnswerSheet.svelte';
+  import HookMap, { type Entity } from '$lib/components/HookMap.svelte';
 
   const auth = getAuth();
 
@@ -41,10 +41,9 @@
   let insight = $state<{ insight: string; hook: string } | null>(null);
   let insightLoading = $state(false);
   let insightShown = $state(false); // Explain-on-correct inline display
-  let sheet = $state<Sheet | null>(null);
-  let sheetLoading = $state(false);
-  let sheetAddedNow = $state(0);
-  let sheetGen = 0; // guards against a stale sheet fetch resolving after a newer question/pause
+  let entity = $state<Entity | null>(null);
+  let entityLoading = $state(false);
+  let entityGen = 0; // guards against a stale fetch resolving after a newer question/pause
 
   // Incremented on every filter change; in-flight fetches/prefetches captured
   // before the change discard their results to avoid leaking old-filter data.
@@ -86,9 +85,8 @@
         pausedForInsight = false;
         insightShown = false;
         insight = null;
-        sheet = null;
-        sheetAddedNow = 0;
-        sheetGen++;
+        entity = null;
+        entityGen++;
       } else {
         done = false;
         isNew = res.isNew;
@@ -96,9 +94,8 @@
         pausedForInsight = false;
         insightShown = false;
         insight = null;
-        sheet = null;
-        sheetAddedNow = 0;
-        sheetGen++;
+        entity = null;
+        entityGen++;
       }
     } catch (err: any) {
       if (gen !== filterGen) return;
@@ -124,7 +121,7 @@
         // Teaching pause: stay on the card and show the insight.
         pausedForInsight = true;
         fetchInsight(question.id);
-        fetchSheet(question.id);
+        fetchEntity(question.id);
       } else {
         showAnswer = false;
         await fetchQuestion();
@@ -148,31 +145,19 @@
     }
   }
 
-  async function fetchSheet(questionId: number) {
-    const gen = ++sheetGen;
-    sheet = null;
-    sheetAddedNow = 0;
-    sheetLoading = true;
+  async function fetchEntity(questionId: number) {
+    const gen = ++entityGen;
+    entity = null;
+    entityLoading = true;
     try {
-      const res = await api.get(`/api/sheet/question/${questionId}`);
-      if (gen !== sheetGen) return; // a newer fetch/reset superseded this one
-      sheet = res;
+      const res = await api.get(`/api/pavlov/entity/question/${questionId}`);
+      if (gen !== entityGen) return; // superseded
+      entity = res; // null on 204 (api.get returns null for empty bodies)
     } catch {
-      if (gen !== sheetGen) return;
-      sheet = null;
+      if (gen !== entityGen) return;
+      entity = null;
     } finally {
-      if (gen === sheetGen) sheetLoading = false;
-    }
-  }
-
-  async function addSheetFacts() {
-    if (!sheet) return;
-    try {
-      const res = await api.post('/api/pavlov/facts', { answerNorm: sheet.answerNorm });
-      sheetAddedNow = res.added ?? 0;
-      sheet = { ...sheet, factsAdded: true };
-    } catch (err: any) {
-      error = err?.message ?? 'Could not add fact cards';
+      if (gen === entityGen) entityLoading = false;
     }
   }
 
@@ -180,9 +165,8 @@
     pausedForInsight = false;
     insight = null;
     insightShown = false;
-    sheet = null;
-    sheetAddedNow = 0;
-    sheetGen++;
+    entity = null;
+    entityGen++;
     showAnswer = false;
     await fetchQuestion();
   }
@@ -417,8 +401,11 @@
                   <p class="text-jeopardy-gold text-sm font-semibold mt-2">💡 {insight.hook}</p>
                 </div>
               {/if}
-              {#if sheetLoading || sheet}
-                <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} addedNow={sheetAddedNow} onAddFacts={addSheetFacts} />
+              {#if entity}
+                <div class="bg-white/10 border border-white/20 rounded-xl px-4 py-3">
+                  <p class="text-xs uppercase tracking-wide text-white/50 mb-1">In your Pavlov deck · {entity.answer}</p>
+                  <HookMap {entity} />
+                </div>
               {/if}
               <button
                 onclick={advanceFromPause}

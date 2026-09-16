@@ -44,4 +44,10 @@
       {/if}
     </p>
   {/if}
+  {#if progress.hooksTotal > 0}
+    <p class="text-xs text-gray-400 mt-1">
+      Hook coverage <span class="font-semibold text-gray-600">{progress.hooksSeen.toLocaleString()} / {progress.hooksTotal.toLocaleString()}</span>
+      · {Math.round((progress.hooksSeen / progress.hooksTotal) * 100)}% of the angles on cards you've touched
+    </p>
+  {/if}
 </div>

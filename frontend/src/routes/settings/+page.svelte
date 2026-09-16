@@ -18,7 +18,6 @@
   let pavlovTargetDate = $state('');
   let timezone = $state('');
   let adaptiveTargeting = $state(true);
-  let pavlovAutoFacts = $state(false);
   let srsSaved = $state(false);
 
   onMount(async () => {
@@ -30,7 +29,6 @@
       pavlovTargetDate = prefs?.pavlovTargetDate ?? '';
       timezone = prefs?.timezone ?? '';
       adaptiveTargeting = prefs?.adaptiveTargeting ?? true;
-      pavlovAutoFacts = prefs?.pavlovAutoFacts ?? false;
     } catch {
       // ignore; keep defaults
     }
@@ -49,7 +47,6 @@
         pavlovTargetDate: pavlovTargetDate || undefined,
         timezone,
         adaptiveTargeting,
-        pavlovAutoFacts,
       });
       srsSaved = true;
       if (savedTimer) clearTimeout(savedTimer);
@@ -134,11 +131,6 @@
             class="mt-1 w-48 rounded-lg border border-gray-300 px-3 py-2"
           />
           <span class="block text-xs text-gray-400 mt-1">The dashboard's deck-progress pace is measured against this date.</span>
-        </label>
-
-        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-          <input type="checkbox" bind:checked={pavlovAutoFacts} onchange={saveSrsPrefs} />
-          Auto-add fact cards when I miss a Pavlov card
         </label>
 
         <label class="block">
