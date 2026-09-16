@@ -173,8 +173,9 @@ pub async fn stats(
     .fetch_one(&state.pool)
     .await?;
     let new_today: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards
-         WHERE user_id = $1 AND created_at >= $2 AND last_review IS NOT NULL",
+        "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
+         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL
+           AND pa.kind = 'answer'",
     )
     .bind(user_id)
     .bind(day_start)
@@ -282,7 +283,8 @@ pub async fn stats(
         .await?;
     let window_start = day_start - Duration::days(13); // today + 13 prior local days
     let created_14d: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards WHERE user_id = $1 AND created_at >= $2",
+        "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
+         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND pa.kind = 'answer'",
     )
     .bind(user_id)
     .bind(window_start)

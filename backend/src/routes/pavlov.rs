@@ -303,7 +303,9 @@ pub async fn drill_next(
     // NULL. Only rows created via `grade` (which always sets last_review) count
     // as introduced new cards, so exclude last_review IS NULL rows here.
     let new_today: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards WHERE user_id = $1 AND created_at >= $2 AND last_review IS NOT NULL",
+        "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
+         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL
+           AND pa.kind = 'answer'",
     )
     .bind(user_id)
     .bind(day_start)
@@ -460,6 +462,35 @@ pub(crate) fn is_first_grade(existing: Option<&PavlovCardRow>) -> bool {
     existing.map_or(true, |r| r.last_review.is_none())
 }
 
+/// Look up the graded card's kind and the user's auto-add preference, and —
+/// only for a real answer with the preference on — add fact cards from the
+/// CACHED sheet (never generates: see `sheets::cached_sheet`). Returns 0 when
+/// the card is a fact, the preference is off, or no sheet is cached yet.
+async fn auto_add_facts(
+    state: &Arc<AppState>,
+    user_id: i32,
+    answer_id: i32,
+) -> Result<i64, AppError> {
+    let (kind, norm): (String, String) =
+        sqlx::query_as("SELECT kind, answer_norm FROM pavlov_answers WHERE id = $1")
+            .bind(answer_id)
+            .fetch_one(&state.pool)
+            .await?;
+    let auto: bool = sqlx::query_scalar("SELECT pavlov_auto_facts FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.pool)
+        .await?;
+    if kind != "answer" || !auto {
+        return Ok(0);
+    }
+    if crate::sheets::cached_sheet(state, &norm).await?.is_none() {
+        return Ok(0);
+    }
+    Ok(crate::routes::pavlov_facts::add_fact_cards(state, user_id, &norm)
+        .await?
+        .unwrap_or(0))
+}
+
 /// SM-2 schedule for a cue card. Deliberately does NOT touch question_attempts
 /// or quiz_sessions — cue reps are not clue attempts (spec §3).
 pub async fn drill_grade(
@@ -542,27 +573,19 @@ pub async fn drill_grade(
     tx.commit().await?;
 
     // Auto-add fact cards on a Wrong for a real answer when the user opted in.
-    let mut facts_added: i64 = 0;
-    if rating == Rating::Wrong {
-        let (kind, norm): (String, String) = sqlx::query_as(
-            "SELECT kind, answer_norm FROM pavlov_answers WHERE id = $1",
-        )
-        .bind(body.answer_id)
-        .fetch_one(&state.pool)
-        .await?;
-        let auto: bool = sqlx::query_scalar("SELECT pavlov_auto_facts FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_one(&state.pool)
-            .await?;
-        if kind == "answer" && auto {
-            // The sheet is normally prefetched by drill_next; ensure it exists.
-            if crate::sheets::ensure_sheet(&state, &norm).await?.is_some() {
-                facts_added = crate::routes::pavlov_facts::add_fact_cards(&state, user_id, &norm)
-                    .await?
-                    .unwrap_or(0);
+    // Cache-only and error-swallowing: this must never turn an already-committed
+    // grade into a failed response, and must never block on LLM generation.
+    let facts_added: i64 = if rating == Rating::Wrong {
+        match auto_add_facts(&state, user_id, body.answer_id).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!("auto-add facts failed for answer {}: {e:?}", body.answer_id);
+                0
             }
         }
-    }
+    } else {
+        0
+    };
 
     Ok(Json(json!({
         "state": out.state.as_str(),

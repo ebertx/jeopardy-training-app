@@ -13,10 +13,12 @@ FROM pavlov_answers f WHERE f.kind = 'fact'
   AND NOT EXISTS (SELECT 1 FROM pavlov_answers p WHERE p.answer_norm = f.parent_norm AND p.kind = 'answer')
   AND NOT EXISTS (SELECT 1 FROM answer_sheets s WHERE s.answer_norm = f.parent_norm);
 
--- C. expect 0: deck-progress total must never count facts (mirror of pavlov_stats deck_total).
-SELECT 'facts_in_deck_total' AS check,
-       (SELECT count(*) FROM pavlov_answers) - (SELECT count(*) FROM pavlov_answers WHERE kind = 'answer')
-       - (SELECT count(*) FROM pavlov_answers WHERE kind = 'fact') AS fail_rows;
+-- C. Fact rows are well-formed (expect 0) + informational counts by kind.
+SELECT 'malformed_fact_norm' AS check, count(*) AS fail_rows
+FROM pavlov_answers WHERE kind = 'fact' AND (answer_norm NOT LIKE '%::_' OR parent_norm IS NULL);
+SELECT kind, count(*) FROM pavlov_answers GROUP BY 1;
+-- deckTotal/touched/pace/allowance exclusion of facts is verified in the live smoke:
+-- progress.deckTotal and progress.touched must not change after "Drill these 4".
 
 -- D. Fact-card upsert + card insert shape, rolled back (uses a synthetic parent).
 BEGIN;

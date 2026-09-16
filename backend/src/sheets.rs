@@ -198,6 +198,12 @@ pub fn pregenerate_sheet(state: &Arc<AppState>, answer_norm: String) {
     });
 }
 
+/// Cached-only lookup: no generation, no single-flight polling. Used where a
+/// slow/failing LLM call must never block or fail the caller (e.g. grading).
+pub async fn cached_sheet(state: &Arc<AppState>, answer_norm: &str) -> Result<Option<SheetContent>, AppError> {
+    read_cached(state, answer_norm).await
+}
+
 /// Display answer for a norm: the Pavlov deck's display form when present.
 pub async fn display_answer(state: &Arc<AppState>, answer_norm: &str) -> Result<Option<String>, AppError> {
     let s: Option<String> = sqlx::query_scalar(
