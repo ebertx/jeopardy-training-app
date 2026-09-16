@@ -15,12 +15,61 @@ pub fn norm_response(s: &str) -> String {
     stripped.trim().to_string()
 }
 
-/// Remove `(...)` segments (nested-aware), collapse runs of whitespace.
-/// Quote characters are left alone: the corpus stores quoted titles as
-/// ordinary response text (`\"The Raven\"`, `Toys "R" Us`), so a response is
-/// not free to lose them here. (Vetted-TSV nicknames get their own
-/// quote-stripping helper, `vetted_response_key`, below.)
+/// A leading parenthetical whose content is name-like (only letters, spaces,
+/// `.`, `-`, `'`, `"`, `&`) is part of the name and is kept, parens removed:
+/// `"(George) Washington"` → `George Washington`. Every other parenthetical
+/// is an annotation and is dropped whole: `"Andrew Jackson (Old Hickory)"` →
+/// `Andrew Jackson`; `"(1 of) Spain (or Portugal)"` → `Spain` (the leading
+/// content has a digit, so it isn't name-like and is dropped like the
+/// rest). Dropping is nested-aware; an unbalanced trailing `(` drops to the
+/// end of the string. Quote characters are left alone: the corpus stores
+/// quoted titles as ordinary response text (`\"The Raven\"`, `Toys "R" Us`),
+/// so a response is not free to lose them here. (Vetted-TSV nicknames get
+/// their own quote-stripping helper, `vetted_response_key`, below.)
 pub fn strip_parens(s: &str) -> String {
+    let t = s.trim();
+    if let Some((content, rest)) = leading_paren(t) {
+        if is_name_like(content) {
+            let combined = format!("{} {}", content.trim(), drop_all_parens(rest));
+            return combined.split_whitespace().collect::<Vec<_>>().join(" ");
+        }
+    }
+    drop_all_parens(t)
+}
+
+/// If `s` starts with `(`, returns `(content_between_the_parens, rest_after_the_close)`
+/// for the matching top-level close (nested-aware). `None` if `s` doesn't
+/// open with `(`, or the paren is never closed.
+fn leading_paren(s: &str) -> Option<(&str, &str)> {
+    if !s.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&s[1..i], &s[i + 1..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Only letters, spaces, `.`, `-`, `'`, `"`, `&` — the character set R1
+/// treats as "part of a name" rather than an annotation.
+fn is_name_like(s: &str) -> bool {
+    let t = s.trim();
+    !t.is_empty() && t.chars().all(|c| c.is_alphabetic() || matches!(c, ' ' | '.' | '-' | '\'' | '"' | '&'))
+}
+
+/// Remove every top-level `(...)` segment (nested-aware; an unbalanced `(`
+/// drops to the end of the string), collapse runs of whitespace.
+fn drop_all_parens(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut depth = 0usize;
     for c in s.chars() {
@@ -90,8 +139,9 @@ fn strip_quoted(s: &str) -> String {
 
 /// `"(First) Last"` → `Some((first_lower, last_key))`. The parenthetical must
 /// open the string; the remainder must be a single-word name (no commas, no
-/// digits, no spaces after normalization). Honorifics inside the parens are
-/// dropped so `"(Sir Edward) Elgar"` licenses `edward`.
+/// digits, no spaces after normalization); the first name must be name-like
+/// (R1's rule — letters, spaces, `.`, `-`, `'`, `"`, `&`) after honorifics
+/// inside the parens are dropped, so `"(Sir Edward) Elgar"` licenses `edward`.
 pub fn parenthetical_license(raw: &str) -> Option<(String, String)> {
     let t = raw.trim();
     if !t.starts_with('(') {
@@ -100,13 +150,10 @@ pub fn parenthetical_license(raw: &str) -> Option<(String, String)> {
     let close = t.find(')')?;
     let first = strip_honorific(t[1..close].trim()).to_lowercase();
     let last = norm_response(t[close + 1..].trim());
-    if first.is_empty() || last.is_empty() || last.contains(' ') || last.contains(',') {
+    if last.is_empty() || last.contains(' ') || last.contains(',') || last.chars().any(|c| c.is_ascii_digit()) {
         return None;
     }
-    if first.chars().any(|c| c.is_ascii_digit()) || last.chars().any(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if !first.chars().all(|c| c.is_alphabetic() || c == ' ' || c == '-' || c == '.' || c == '\'') {
+    if !is_name_like(&first) {
         return None;
     }
     Some((first, last))
@@ -126,10 +173,18 @@ pub struct Entity {
     pub freq: i64,
 }
 
-/// Group response forms into entities (spec §1 rules):
-/// 1. key = entity_key(raw);
-/// 2. a multi-token key `first last` collapses to `last` only when some form
-///    `"(first) last"` exists in the input (the parenthetical license);
+/// Group response forms into entities (controller ruling, spec §1 to be
+/// amended to match):
+/// 1. key = entity_key(raw) — always the full name (R2): a leading name-like
+///    parenthetical is already folded into it by `strip_parens`, so
+///    `"(Edvard) Grieg"` and `"Edvard Grieg"` share the key `edvard grieg`.
+/// 2. a single-token (bare-surname) key `s` is absorbed into a multi-token
+///    key `f s` only when BOTH hold (R3): exactly one distinct first name
+///    `f` is licensed for `s` (via `parenthetical_license` on some form
+///    `"(f) s"`), and the bare form isn't the dominant usage — its count
+///    does not exceed the summed count of the `f s` forms. Otherwise the
+///    bare form stays its own entity, so an ambiguous or dominant surname
+///    (`Washington`, `London`) never swallows unrelated answers.
 /// 3. display = the form with the most tokens (parentheticals stripped), ties
 ///    by count; forms = raw strings by count desc; freq = sum of counts.
 pub fn resolve(forms: &[Form]) -> Vec<Entity> {
@@ -142,20 +197,42 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
 
     let mut groups: BTreeMap<String, Vec<&Form>> = BTreeMap::new();
     for f in forms {
-        let base = entity_key(&f.raw);
-        if base.is_empty() {
+        let key = entity_key(&f.raw);
+        if key.is_empty() {
             continue;
         }
-        let key = match base.rsplit_once(' ') {
-            Some((first, last)) if licenses.get(last).is_some_and(|s| s.contains(first)) => {
-                last.to_string()
-            }
-            _ => base,
-        };
         groups.entry(key).or_default().push(f);
     }
 
-    groups
+    // Bare-surname absorption (R3): a single-token key with exactly one
+    // licensed first name is folded into that full-name key, unless the
+    // bare form's own count already dominates the full-name forms' total.
+    let freq_by_key: HashMap<&str, i64> =
+        groups.iter().map(|(k, members)| (k.as_str(), members.iter().map(|m| m.count).sum())).collect();
+    let mut absorbed_into: HashMap<String, String> = HashMap::new();
+    for key in groups.keys() {
+        if key.contains(' ') {
+            continue; // already a full name, nothing to absorb it into
+        }
+        let Some(firsts) = licenses.get(key) else { continue };
+        if firsts.len() != 1 {
+            continue; // ambiguous: more than one licensed first name
+        }
+        let first = firsts.iter().next().unwrap();
+        let full_key = format!("{first} {key}");
+        let Some(&full_freq) = freq_by_key.get(full_key.as_str()) else { continue };
+        if freq_by_key[key.as_str()] <= full_freq {
+            absorbed_into.insert(key.clone(), full_key);
+        }
+    }
+
+    let mut merged: BTreeMap<String, Vec<&Form>> = BTreeMap::new();
+    for (key, members) in groups {
+        let target = absorbed_into.remove(&key).unwrap_or(key);
+        merged.entry(target).or_default().extend(members);
+    }
+
+    merged
         .into_iter()
         .map(|(key, mut members)| {
             members.sort_by(|a, b| b.count.cmp(&a.count).then(a.raw.cmp(&b.raw)));
@@ -200,11 +277,17 @@ mod tests {
     }
 
     #[test]
-    fn strip_parens_removes_parentheticals_only() {
-        assert_eq!(strip_parens("(Edvard) Grieg"), "Grieg");
+    fn leading_name_parenthetical_is_kept_trailing_ones_dropped() {
+        assert_eq!(strip_parens("(George) Washington"), "George Washington");
+        assert_eq!(strip_parens("(Sir Edward) Elgar"), "Sir Edward Elgar");
+        assert_eq!(strip_parens("(University of) Chicago"), "University of Chicago");
+        assert_eq!(strip_parens("Andrew Jackson (Old Hickory)"), "Andrew Jackson");
+        assert_eq!(strip_parens("Mexico (Mexico City)"), "Mexico");
+        assert_eq!(strip_parens("George (H.W.) Bush"), "George Bush");
+        assert_eq!(strip_parens("(1 of) Spain (or Portugal)"), "Spain");
         assert_eq!(strip_parens("Edvard Munch (1863-1944)"), "Edvard Munch");
-        assert_eq!(strip_parens("jean \"finlandia\" sibelius"), "jean \"finlandia\" sibelius");
         assert_eq!(strip_parens("Grieg"), "Grieg");
+        assert_eq!(strip_parens("jean \"finlandia\" sibelius"), "jean \"finlandia\" sibelius");
     }
 
     #[test]
@@ -216,11 +299,13 @@ mod tests {
     }
 
     #[test]
-    fn entity_key_composes_the_three_steps() {
-        assert_eq!(entity_key("(Sir Edward) Elgar"), "elgar");
+    fn entity_key_is_the_full_name() {
+        assert_eq!(entity_key("(Edvard) Grieg"), "edvard grieg");
+        assert_eq!(entity_key("(Sir Edward) Elgar"), "edward elgar");
         assert_eq!(entity_key("Sir Edward Elgar"), "edward elgar");
         assert_eq!(entity_key("the Visigoths"), "visigoths");
         assert_eq!(entity_key("(the) Visigoths"), "visigoths");
+        assert_eq!(entity_key("Andrew Jackson (Old Hickory)"), "andrew jackson");
     }
 
     #[test]
@@ -268,20 +353,19 @@ mod tests {
     #[test]
     fn grieg_forms_merge_into_one_entity() {
         let ents = resolve(&[f("(Edvard) Grieg", 19), f("Edvard Grieg", 19), f("Grieg", 11), f("Edward Grieg", 2)]);
-        let g = by_key(&ents, "grieg");
+        let g = by_key(&ents, "edvard grieg");
         assert_eq!(g.display, "Edvard Grieg");
         assert_eq!(g.freq, 49);
         assert_eq!(g.forms, vec!["(Edvard) Grieg", "Edvard Grieg", "Grieg"]);
-        // misspelled first name is NOT licensed
         assert_eq!(by_key(&ents, "edward grieg").freq, 2);
         assert_eq!(ents.len(), 2);
     }
 
     #[test]
-    fn honorific_forms_merge_under_the_licensed_surname() {
+    fn honorific_forms_merge_under_the_full_name() {
         let ents = resolve(&[f("(Sir Edward) Elgar", 10), f("Sir Edward Elgar", 5), f("Edward Elgar", 8), f("Elgar", 5)]);
         assert_eq!(ents.len(), 1);
-        assert_eq!(ents[0].key, "elgar");
+        assert_eq!(ents[0].key, "edward elgar");
         assert_eq!(ents[0].freq, 28);
         assert_eq!(ents[0].display, "Sir Edward Elgar");
     }
@@ -290,36 +374,48 @@ mod tests {
     fn multiword_first_names_are_licensed_as_a_unit() {
         let ents = resolve(&[f("(Ralph Waldo) Emerson", 30), f("Ralph Waldo Emerson", 40), f("Emerson", 12)]);
         assert_eq!(ents.len(), 1);
-        assert_eq!(ents[0].display, "Ralph Waldo Emerson");
+        assert_eq!(ents[0].key, "ralph waldo emerson");
         assert_eq!(ents[0].freq, 82);
     }
 
     #[test]
+    fn ambiguous_surname_never_absorbs_the_bare_form() {
+        let ents = resolve(&[f("(George) Washington", 40), f("George Washington", 200), f("(Denzel) Washington", 5), f("Denzel Washington", 30), f("Washington", 250)]);
+        assert_eq!(ents.len(), 3);
+        assert_eq!(by_key(&ents, "washington").freq, 250);
+        assert_eq!(by_key(&ents, "george washington").freq, 240);
+        assert_eq!(by_key(&ents, "denzel washington").freq, 35);
+    }
+
+    #[test]
+    fn dominant_bare_form_stays_separate() {
+        // "(Jack) London" licenses jack, but London the city dominates.
+        let ents = resolve(&[f("London", 296), f("Jack London", 70), f("(Jack) London", 17)]);
+        assert_eq!(ents.len(), 2);
+        assert_eq!(by_key(&ents, "london").freq, 296);
+        assert_eq!(by_key(&ents, "jack london").freq, 87);
+        // Beethoven: bare 150 > 60 + 20, so it stays separate too (a missed merge, never a wrong one).
+        let ents = resolve(&[f("(Ludwig van) Beethoven", 60), f("Beethoven", 150), f("Ludwig van Beethoven", 20)]);
+        assert_eq!(ents.len(), 2);
+        assert_eq!(by_key(&ents, "ludwig van beethoven").display, "Ludwig van Beethoven");
+        assert_eq!(by_key(&ents, "ludwig van beethoven").forms[0], "(Ludwig van) Beethoven");
+    }
+
+    #[test]
     fn unlicensed_compounds_stay_separate() {
-        let ents = resolve(&[
-            f("Mexico", 387), f("New Mexico", 179),
-            f("London", 296), f("Jack London", 70),
-            f("Washington", 223), f("Denzel Washington", 32),
-        ]);
-        assert_eq!(ents.len(), 6);
+        let ents = resolve(&[f("Mexico", 387), f("New Mexico", 179), f("Paris", 300), f("the Treaty of Paris", 40), f("(Treaty of) Paris", 10)]);
+        assert_eq!(ents.len(), 4);
         assert_eq!(by_key(&ents, "new mexico").freq, 179);
-        assert_eq!(by_key(&ents, "jack london").freq, 70);
-        assert_eq!(by_key(&ents, "denzel washington").freq, 32);
+        assert_eq!(by_key(&ents, "treaty of paris").freq, 50);
+        assert_eq!(by_key(&ents, "paris").freq, 300);
     }
 
     #[test]
     fn different_first_name_variants_do_not_merge() {
-        let ents = resolve(&[f("(Claude) Debussy", 20), f("Claude Debussy", 20), f("Claude-Achille Debussy", 1)]);
+        let ents = resolve(&[f("(Claude) Debussy", 20), f("Claude Debussy", 20), f("Claude-Achille Debussy", 1), f("Debussy", 3)]);
         assert_eq!(ents.len(), 2);
-        assert_eq!(by_key(&ents, "debussy").freq, 40);
+        assert_eq!(by_key(&ents, "claude debussy").freq, 43);
         assert_eq!(by_key(&ents, "claude-achille debussy").freq, 1);
-    }
-
-    #[test]
-    fn display_prefers_the_fullest_then_most_frequent_form() {
-        let ents = resolve(&[f("(Ludwig van) Beethoven", 60), f("Beethoven", 150), f("Ludwig van Beethoven", 20)]);
-        assert_eq!(ents[0].display, "Ludwig van Beethoven");
-        assert_eq!(ents[0].forms[0], "Beethoven"); // forms sorted by count desc
     }
 
     #[test]
