@@ -236,18 +236,43 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
         .into_iter()
         .map(|(key, mut members)| {
             members.sort_by(|a, b| b.count.cmp(&a.count).then(a.raw.cmp(&b.raw)));
-            let display = members
-                .iter()
-                .map(|m| (strip_parens(&m.raw), m.count))
-                .filter(|(d, _)| !d.is_empty())
-                .max_by(|(da, ca), (db, cb)| {
-                    da.split_whitespace().count()
-                        .cmp(&db.split_whitespace().count())
-                        .then(ca.cmp(cb))
-                        .then(db.cmp(da))
+            // R5: display is the most frequent surviving stripped form among
+            // this entity's OWN forms — "surviving" meaning stripping and
+            // re-keying it lands back on this entity's key, which excludes a
+            // bare surname absorbed from elsewhere (its own key differs).
+            // Identical stripped strings pool their counts; ties keep the
+            // alphabetically-first string, via BTreeMap's ascending order.
+            let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+            for m in &members {
+                let stripped = strip_parens(&m.raw);
+                if stripped.is_empty() || entity_key(&stripped) != key {
+                    continue;
+                }
+                *counts.entry(stripped).or_insert(0) += m.count;
+            }
+            let display = counts
+                .into_iter()
+                .fold(None::<(String, i64)>, |best, (s, c)| match best {
+                    Some((bs, bc)) if bc >= c => Some((bs, bc)),
+                    _ => Some((s, c)),
                 })
-                .map(|(d, _)| d)
-                .unwrap_or_else(|| key.clone());
+                .map(|(s, _)| s)
+                .unwrap_or_else(|| {
+                    // Should be unreachable for a well-formed group: fall
+                    // back to the old rule (most tokens, then count).
+                    members
+                        .iter()
+                        .map(|m| (strip_parens(&m.raw), m.count))
+                        .filter(|(d, _)| !d.is_empty())
+                        .max_by(|(da, ca), (db, cb)| {
+                            da.split_whitespace().count()
+                                .cmp(&db.split_whitespace().count())
+                                .then(ca.cmp(cb))
+                                .then(db.cmp(da))
+                        })
+                        .map(|(d, _)| d)
+                        .unwrap_or_else(|| key.clone())
+                });
             Entity {
                 freq: members.iter().map(|m| m.count).sum(),
                 forms: members.iter().map(|m| m.raw.clone()).collect(),
@@ -416,6 +441,17 @@ mod tests {
         assert_eq!(ents.len(), 2);
         assert_eq!(by_key(&ents, "claude debussy").freq, 43);
         assert_eq!(by_key(&ents, "claude-achille debussy").freq, 1);
+    }
+
+    #[test]
+    fn display_is_the_most_frequent_form_of_the_full_name() {
+        let ents = resolve(&[f("France", 460), f("the France", 1), f("France (or England)", 2)]);
+        assert_eq!(ents.len(), 1);
+        assert_eq!(ents[0].display, "France");
+        let ents = resolve(&[f("Napoleon", 250), f("a Napoleon", 1), f("Napoleon (Bonaparte)", 6)]);
+        assert_eq!(ents[0].display, "Napoleon");
+        let ents = resolve(&[f("the Netherlands", 200), f("Netherlands", 40), f("The Netherlands (Holland)", 3)]);
+        assert_eq!(ents[0].display, "the Netherlands");
     }
 
     #[test]
