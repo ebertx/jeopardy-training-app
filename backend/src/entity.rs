@@ -15,17 +15,19 @@ pub fn norm_response(s: &str) -> String {
     stripped.trim().to_string()
 }
 
-/// Remove `(...)` and `"..."` segments, collapse runs of whitespace.
+/// Remove `(...)` segments (nested-aware), collapse runs of whitespace.
+/// Quote characters are left alone: the corpus stores quoted titles as
+/// ordinary response text (`\"The Raven\"`, `Toys "R" Us`), so a response is
+/// not free to lose them here. (Vetted-TSV nicknames get their own
+/// quote-stripping helper, `vetted_response_key`, below.)
 pub fn strip_parens(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut depth = 0usize;
-    let mut in_quote = false;
     for c in s.chars() {
         match c {
-            '(' if !in_quote => depth += 1,
-            ')' if !in_quote && depth > 0 => depth -= 1,
-            '"' if depth == 0 => in_quote = !in_quote,
-            _ if depth == 0 && !in_quote => out.push(c),
+            '(' => depth += 1,
+            ')' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
             _ => {}
         }
     }
@@ -45,17 +47,45 @@ pub fn strip_honorific(s: &str) -> String {
     t.to_string()
 }
 
-/// The entity key of a raw response string. Strips parentheticals, quoted
-/// asides and honorifics, then normalizes; but if that strip leaves nothing
-/// or only a bare article, falls back to the plain norm of the raw string,
-/// so a wholly quoted response (e.g. `The "Mona Lisa"`) keeps its own key
-/// instead of every such response collapsing into `the`.
+/// The entity key of a raw response string. Strips parentheticals and
+/// honorifics, then normalizes; but if that strip leaves nothing or only a
+/// bare article (a `(...)`-only response, e.g. `(the) Visigoths`), falls
+/// back to the plain norm of the raw string. Quote characters are never
+/// stripped here — the corpus stores quoted titles as ordinary response
+/// text, so `The "Mona Lisa"` and `"Hamlet"` keep their own distinct keys.
 pub fn entity_key(raw: &str) -> String {
     let stripped = norm_response(&strip_honorific(&strip_parens(raw)));
     if stripped.is_empty() || matches!(stripped.as_str(), "the" | "a" | "an") {
         return norm_response(raw);
     }
     stripped
+}
+
+/// Key for a vetted-list response, which may carry a quoted nickname
+/// (`jean "finlandia" sibelius`). Quoted segments are dropped first; if that
+/// leaves nothing usable, the quote characters alone are dropped instead.
+pub fn vetted_response_key(raw: &str) -> String {
+    let unquoted = strip_quoted(raw);
+    let key = entity_key(&unquoted);
+    if key.is_empty() || matches!(key.as_str(), "the" | "a" | "an") {
+        entity_key(&raw.replace('"', ""))
+    } else {
+        key
+    }
+}
+
+/// Remove `"..."` segments (unbalanced trailing quote: drop to end), collapse whitespace.
+fn strip_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_quote = false;
+    for c in s.chars() {
+        match c {
+            '"' => in_quote = !in_quote,
+            _ if !in_quote => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `"(First) Last"` → `Some((first_lower, last_key))`. The parenthetical must
@@ -170,10 +200,10 @@ mod tests {
     }
 
     #[test]
-    fn strip_parens_removes_parentheticals_and_quoted_nicknames() {
+    fn strip_parens_removes_parentheticals_only() {
         assert_eq!(strip_parens("(Edvard) Grieg"), "Grieg");
         assert_eq!(strip_parens("Edvard Munch (1863-1944)"), "Edvard Munch");
-        assert_eq!(strip_parens("jean \"finlandia\" sibelius"), "jean sibelius");
+        assert_eq!(strip_parens("jean \"finlandia\" sibelius"), "jean \"finlandia\" sibelius");
         assert_eq!(strip_parens("Grieg"), "Grieg");
     }
 
@@ -198,13 +228,31 @@ mod tests {
         assert_eq!(entity_key("The \"Mona Lisa\""), "\"mona lisa\"");
         assert_eq!(entity_key("\"Hamlet\""), "\"hamlet\"");
         assert_eq!(entity_key("a \"Streetcar Named Desire\""), "\"streetcar named desire\"");
-        assert_eq!(entity_key("5\" floppy disk"), "5"); // unbalanced quote: still non-empty
+        assert_eq!(entity_key("5\" floppy disk"), "5\" floppy disk");
     }
 
     #[test]
     fn quoted_titles_never_merge_together() {
         let ents = resolve(&[f("The \"Mona Lisa\"", 40), f("the \"Scream\"", 30), f("\"Hamlet\"", 20)]);
         assert_eq!(ents.len(), 3);
+    }
+
+    #[test]
+    fn escaped_corpus_quotes_stay_distinct_entities() {
+        // The corpus stores titles as \"The Raven\" (backslash-escaped quotes).
+        assert_eq!(entity_key("\\\"The Raven\\\""), "\\\"the raven\\\"");
+        assert_eq!(entity_key("Toys \"R\" Us"), "toys \"r\" us");
+        let ents = resolve(&[f("\\\"The Raven\\\"", 22), f("\\\"American Pie\\\"", 21), f("\\\"Weird Al\" Yankovic", 17), f("Toys \"R\" Us", 18)]);
+        assert_eq!(ents.len(), 4);
+    }
+
+    #[test]
+    fn vetted_response_key_drops_nicknames_but_keeps_quoted_titles() {
+        assert_eq!(vetted_response_key("jean \"finlandia\" sibelius"), "jean sibelius");
+        assert_eq!(vetted_response_key("edvard \"peer gynt\" grieg"), "edvard grieg");
+        assert_eq!(vetted_response_key("edvard munch (1863-1944)"), "edvard munch");
+        assert_eq!(vetted_response_key("\"lullaby\""), "lullaby");
+        assert_eq!(vetted_response_key("the \"raven\""), "raven");
     }
 
     #[test]

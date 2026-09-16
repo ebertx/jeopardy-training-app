@@ -372,7 +372,7 @@ async fn import_vetted(state: &Arc<AppState>) -> Result<Vec<VettedMatch>, AppErr
     let mut out = Vec::with_capacity(pairs.len());
     let mut unmatched = 0usize;
     for p in &pairs {
-        let key = entity::entity_key(&p.response);
+        let key = entity::vetted_response_key(&p.response);
         if key.is_empty() {
             continue;
         }
