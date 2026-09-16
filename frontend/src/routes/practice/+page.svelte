@@ -44,6 +44,7 @@
   let sheet = $state<Sheet | null>(null);
   let sheetLoading = $state(false);
   let sheetAddedNow = $state(0);
+  let sheetGen = 0; // guards against a stale sheet fetch resolving after a newer question/pause
 
   // Incremented on every filter change; in-flight fetches/prefetches captured
   // before the change discard their results to avoid leaking old-filter data.
@@ -87,6 +88,7 @@
         insight = null;
         sheet = null;
         sheetAddedNow = 0;
+        sheetGen++;
       } else {
         done = false;
         isNew = res.isNew;
@@ -96,6 +98,7 @@
         insight = null;
         sheet = null;
         sheetAddedNow = 0;
+        sheetGen++;
       }
     } catch (err: any) {
       if (gen !== filterGen) return;
@@ -146,15 +149,19 @@
   }
 
   async function fetchSheet(questionId: number) {
+    const gen = ++sheetGen;
     sheet = null;
     sheetAddedNow = 0;
     sheetLoading = true;
     try {
-      sheet = await api.get(`/api/sheet/question/${questionId}`);
+      const res = await api.get(`/api/sheet/question/${questionId}`);
+      if (gen !== sheetGen) return; // a newer fetch/reset superseded this one
+      sheet = res;
     } catch {
+      if (gen !== sheetGen) return;
       sheet = null;
     } finally {
-      sheetLoading = false;
+      if (gen === sheetGen) sheetLoading = false;
     }
   }
 
@@ -175,6 +182,7 @@
     insightShown = false;
     sheet = null;
     sheetAddedNow = 0;
+    sheetGen++;
     showAnswer = false;
     await fetchQuestion();
   }

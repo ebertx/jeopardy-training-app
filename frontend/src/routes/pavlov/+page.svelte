@@ -103,7 +103,7 @@
   }
 
   function toggleSheet() {
-    if (!result || !card || card.kind !== 'answer') return;
+    if (paused || !result || !card || card.kind !== 'answer') return;
     sheetOpen = !sheetOpen;
     if (sheetOpen) fetchSheet();
   }
@@ -146,8 +146,13 @@
   }
 
   async function advance() {
-    if (!paused) return;
-    await fetchNext();
+    if (!paused || submitting) return;
+    submitting = true;
+    try {
+      await fetchNext();
+    } finally {
+      submitting = false;
+    }
   }
 
   async function banish() {
@@ -166,7 +171,7 @@
   // Space/Enter reveals (or advances while paused); 1/2/3 self-grade after
   // reveal (honesty mode); b banishes anytime; e toggles the sheet; d adds facts.
   function onKeydown(e: KeyboardEvent) {
-    if (!card || submitting) return;
+    if (!card || submitting || loading) return;
     if (e.key === 'b' || e.key === 'B') {
       e.preventDefault();
       banish();
@@ -322,7 +327,11 @@
               {#if result.kind === 'answer'}
                 {#if sheetOpen}
                   <div class="mt-3">
-                    <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} {addedNow} onAddFacts={addFacts} />
+                    {#if !sheetLoading && sheet === null}
+                      <p class="text-white/50 text-sm text-center mt-3">No answer sheet for this one.</p>
+                    {:else}
+                      <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} {addedNow} onAddFacts={addFacts} />
+                    {/if}
                   </div>
                 {:else}
                   <button onclick={toggleSheet} class="mt-3 w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/80 text-sm font-medium transition-colors">
