@@ -38,3 +38,10 @@ DROP TABLE IF EXISTS answer_sheets;
 DROP INDEX IF EXISTS idx_pavlov_answers_kind_parent;
 ALTER TABLE pavlov_answers DROP COLUMN IF EXISTS kind, DROP COLUMN IF EXISTS parent_norm;
 ALTER TABLE users DROP COLUMN IF EXISTS pavlov_auto_facts;
+
+-- Corpus document frequency per gram, filled by the hooks job on first run
+-- (one GROUP BY over pavlov_clue_ngrams, minutes); read per entity after that.
+CREATE TABLE IF NOT EXISTS pavlov_gram_df (
+  gram TEXT PRIMARY KEY,
+  df   INTEGER NOT NULL
+);

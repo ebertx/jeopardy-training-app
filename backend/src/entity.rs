@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Entity resolution: which response strings are the same Jeopardy! answer.
 //! Spec: docs/superpowers/specs/2026-09-16-jeopardy-objects-design.md §1.
 //! Pure — no DB. `objects::run_resolve` feeds it the corpus response forms.

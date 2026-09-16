@@ -57,6 +57,13 @@ pub async fn resolve(State(state): State<Arc<AppState>>, auth: AuthUser) -> Resu
     .await
 }
 
+pub async fn hooks(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<Value>, AppError> {
+    spawn_admin_job(state, &auth, "hooks", false, |st| async move {
+        crate::objects::run_hooks(&st).await
+    })
+    .await
+}
+
 pub async fn status(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -69,11 +76,32 @@ pub async fn status(
             .fetch_all(&state.pool)
             .await?;
     let get = |k: &str| counts.iter().find(|(s, _)| s == k).map(|(_, n)| *n).unwrap_or(0);
+
+    let (total, labeled, vetted): (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE status = 'active'),
+                count(*) FILTER (WHERE status = 'active' AND cue IS NOT NULL),
+                count(*) FILTER (WHERE status = 'active' AND source IN ('vetted', 'both'))
+         FROM pavlov_hooks",
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    let entities_pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pavlov_answers WHERE hooks_built_at IS NULL")
+            .fetch_one(&state.pool)
+            .await?;
+
     Ok(Json(json!({
         "running": state.pavlov_inflight.load(Ordering::SeqCst),
         "pending": get("pending"),
         "active": get("active"),
         "dropped": get("dropped"),
+        "hooks": {
+            "total": total,
+            "labeled": labeled,
+            "unlabeled": total - labeled,
+            "vetted": vetted,
+            "entitiesPending": entities_pending,
+        },
     })))
 }
 
