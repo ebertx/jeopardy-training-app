@@ -32,16 +32,18 @@ ALTER TABLE pavlov_reviews
   ADD COLUMN IF NOT EXISTS hook_id INTEGER REFERENCES pavlov_hooks(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_pavlov_reviews_hook ON pavlov_reviews (user_id, answer_id, hook_id);
 
+-- Corpus document frequency per gram, filled by the hooks job on first run
+-- (one GROUP BY over pavlov_clue_ngrams, minutes); read per entity after that.
+-- Created before the removals below so a rerun that stops at the
+-- non-rerunnable DELETE has still created this table.
+CREATE TABLE IF NOT EXISTS pavlov_gram_df (
+  gram TEXT PRIMARY KEY,
+  df   INTEGER NOT NULL
+);
+
 -- Removals: answer sheets / fact cards (spec §5). Fact rows cascade to cards + reviews.
 DELETE FROM pavlov_answers WHERE kind = 'fact';
 DROP TABLE IF EXISTS answer_sheets;
 DROP INDEX IF EXISTS idx_pavlov_answers_kind_parent;
 ALTER TABLE pavlov_answers DROP COLUMN IF EXISTS kind, DROP COLUMN IF EXISTS parent_norm;
 ALTER TABLE users DROP COLUMN IF EXISTS pavlov_auto_facts;
-
--- Corpus document frequency per gram, filled by the hooks job on first run
--- (one GROUP BY over pavlov_clue_ngrams, minutes); read per entity after that.
-CREATE TABLE IF NOT EXISTS pavlov_gram_df (
-  gram TEXT PRIMARY KEY,
-  df   INTEGER NOT NULL
-);

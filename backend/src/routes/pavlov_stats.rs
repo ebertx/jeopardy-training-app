@@ -292,6 +292,8 @@ pub async fn stats(
         "SELECT
            (SELECT count(DISTINCT pr.hook_id) FROM pavlov_reviews pr
              JOIN pavlov_hooks h ON h.id = pr.hook_id
+             JOIN pavlov_cards ca ON ca.answer_id = h.answer_id
+               AND ca.user_id = $1 AND ca.last_review IS NOT NULL
              WHERE pr.user_id = $1 AND h.status = 'active' AND h.cue IS NOT NULL),
            (SELECT count(*) FROM pavlov_hooks h
              JOIN pavlov_cards ca ON ca.answer_id = h.answer_id

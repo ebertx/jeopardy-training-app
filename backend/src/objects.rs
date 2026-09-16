@@ -60,13 +60,21 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
     let mut merged = 0usize;
     let mut renamed = 0usize;
     for e in &entities {
-        let old_norms: Vec<String> = e
+        let mut old_norms: Vec<String> = e
             .forms
             .iter()
             .map(|f| entity::norm_response(f))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        // The entity key itself may not appear among the corpus forms' norms
+        // (e.g. the bare form fell out of the non-archived corpus), yet a
+        // pre-existing deck row can already sit at that key. Without it in
+        // the search set, that row is invisible here and the later
+        // `UPDATE ... SET answer_norm = e.key` collides with it.
+        if !old_norms.contains(&e.key) {
+            old_norms.push(e.key.clone());
+        }
         let deck: Vec<(i32, String)> = sqlx::query_as(
             "SELECT id, answer_norm FROM pavlov_answers WHERE answer_norm = ANY($1)
              ORDER BY answer_freq DESC, id",
@@ -224,7 +232,6 @@ pub async fn run_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
     let entities = resolved_entities(state).await?;
     let vetted = import_vetted(state).await?;
     refresh_entity_rows(state, &entities).await?;
-    ensure_gram_df(state).await?;
 
     // A completed previous run leaves no entity pending → this is a
     // regeneration: re-mine everything. Otherwise resume where it stopped.
@@ -233,7 +240,14 @@ pub async fn run_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
         .await?;
     if pending == 0 {
         sqlx::query("UPDATE pavlov_answers SET hooks_built_at = NULL").execute(&state.pool).await?;
+        // A regeneration re-mines every entity's grams from scratch, so the
+        // stale document-frequency table must go too — otherwise every
+        // re-mined gram is absent from it, COALESCE(d.df, 0) scores them all
+        // as maximally distinctive, and they win seeding/key-gram selection.
+        tracing::info!("objects hooks: regeneration run — truncating pavlov_gram_df for rebuild");
+        sqlx::query("TRUNCATE pavlov_gram_df").execute(&state.pool).await?;
     }
+    ensure_gram_df(state).await?;
     // Unlabeled hooks from earlier runs get another try at a label.
     sqlx::query("UPDATE pavlov_hooks SET label_attempted_at = NULL WHERE cue IS NULL AND status = 'active'")
         .execute(&state.pool)
@@ -533,7 +547,18 @@ async fn label_with_model(state: &Arc<AppState>) -> Result<(), AppError> {
         }
         let (system, user) = hook_label_prompts(&inputs);
         let response =
-            crate::openai::chat_json(&state.config.openai_api_key, HOOK_LABEL_MODEL, &system, &user, 0.3).await?;
+            match crate::openai::chat_json(&state.config.openai_api_key, HOOK_LABEL_MODEL, &system, &user, 0.3).await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    // This batch is already marked `label_attempted_at`, so it
+                    // will retry next run's reset; let `rerank` still run
+                    // instead of aborting the whole hooks job on one transient
+                    // model failure.
+                    tracing::warn!("objects hooks: model batch failed, stopping labels for this run: {e:?}");
+                    return Ok(());
+                }
+            };
         let mut labeled = 0usize;
         for out in parse_hook_labels(&response, &inputs) {
             let Some(cue) = out.cue else { continue };

@@ -42,7 +42,6 @@
   let insightLoading = $state(false);
   let insightShown = $state(false); // Explain-on-correct inline display
   let entity = $state<Entity | null>(null);
-  let entityLoading = $state(false);
   let entityGen = 0; // guards against a stale fetch resolving after a newer question/pause
 
   // Incremented on every filter change; in-flight fetches/prefetches captured
@@ -148,7 +147,6 @@
   async function fetchEntity(questionId: number) {
     const gen = ++entityGen;
     entity = null;
-    entityLoading = true;
     try {
       const res = await api.get(`/api/pavlov/entity/question/${questionId}`);
       if (gen !== entityGen) return; // superseded
@@ -156,8 +154,6 @@
     } catch {
       if (gen !== entityGen) return;
       entity = null;
-    } finally {
-      if (gen === entityGen) entityLoading = false;
     }
   }
 

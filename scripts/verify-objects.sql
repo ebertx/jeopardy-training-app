@@ -73,6 +73,7 @@ WHERE pa.answer_norm = 'visigoths' ORDER BY h.rank;
 -- G. Hook coverage for user 1 (mirrors routes/pavlov_stats.rs).
 SELECT
   (SELECT count(DISTINCT pr.hook_id) FROM pavlov_reviews pr JOIN pavlov_hooks h ON h.id = pr.hook_id
+    JOIN pavlov_cards ca ON ca.answer_id = h.answer_id AND ca.user_id = 1 AND ca.last_review IS NOT NULL
     WHERE pr.user_id = 1 AND h.status = 'active' AND h.cue IS NOT NULL) AS hooks_seen,
   (SELECT count(*) FROM pavlov_hooks h JOIN pavlov_cards ca ON ca.answer_id = h.answer_id
     WHERE ca.user_id = 1 AND ca.last_review IS NOT NULL AND h.status = 'active' AND h.cue IS NOT NULL) AS hooks_total;

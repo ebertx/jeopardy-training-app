@@ -45,9 +45,17 @@ pub fn strip_honorific(s: &str) -> String {
     t.to_string()
 }
 
-/// The entity key of a raw response string.
+/// The entity key of a raw response string. Strips parentheticals, quoted
+/// asides and honorifics, then normalizes; but if that strip leaves nothing
+/// or only a bare article, falls back to the plain norm of the raw string,
+/// so a wholly quoted response (e.g. `The "Mona Lisa"`) keeps its own key
+/// instead of every such response collapsing into `the`.
 pub fn entity_key(raw: &str) -> String {
-    norm_response(&strip_honorific(&strip_parens(raw)))
+    let stripped = norm_response(&strip_honorific(&strip_parens(raw)));
+    if stripped.is_empty() || matches!(stripped.as_str(), "the" | "a" | "an") {
+        return norm_response(raw);
+    }
+    stripped
 }
 
 /// `"(First) Last"` → `Some((first_lower, last_key))`. The parenthetical must
@@ -183,6 +191,20 @@ mod tests {
         assert_eq!(entity_key("Sir Edward Elgar"), "edward elgar");
         assert_eq!(entity_key("the Visigoths"), "visigoths");
         assert_eq!(entity_key("(the) Visigoths"), "visigoths");
+    }
+
+    #[test]
+    fn quoted_titles_keep_their_own_key() {
+        assert_eq!(entity_key("The \"Mona Lisa\""), "\"mona lisa\"");
+        assert_eq!(entity_key("\"Hamlet\""), "\"hamlet\"");
+        assert_eq!(entity_key("a \"Streetcar Named Desire\""), "\"streetcar named desire\"");
+        assert_eq!(entity_key("5\" floppy disk"), "5"); // unbalanced quote: still non-empty
+    }
+
+    #[test]
+    fn quoted_titles_never_merge_together() {
+        let ents = resolve(&[f("The \"Mona Lisa\"", 40), f("the \"Scream\"", 30), f("\"Hamlet\"", 20)]);
+        assert_eq!(ents.len(), 3);
     }
 
     #[test]

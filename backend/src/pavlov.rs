@@ -703,6 +703,16 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
     .fetch_all(&state.pool)
     .await?;
 
+    // Corpus frequency per norm, loaded once (a per-row subquery here was a
+    // sequential scan of the whole corpus for each of ~4,800 answers).
+    let freq_rows: Vec<(String, i64)> = sqlx::query_as(&format!(
+        "SELECT {NORM_EXPR} AS norm, count(*) FROM jeopardy_questions jq
+         WHERE jq.archived = false AND jq.question IS NOT NULL GROUP BY 1"
+    ))
+    .fetch_all(&state.pool)
+    .await?;
+    let freq: std::collections::HashMap<String, i64> = freq_rows.into_iter().collect();
+
     for (norm,) in &answers {
         let cue_rows: Vec<(String, String, i32, f32, Vec<i32>, String, String)> = sqlx::query_as(
             "SELECT cue_display, tier, support, prec, example_clue_ids, answer, meta_category
@@ -753,21 +763,17 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
         };
         // answer/forms/vetted are owned by objects::refresh_entity_rows; a
         // rerun of resolve or hooks refreshes them for rows created here.
-        let insert_sql = format!(
-            "INSERT INTO pavlov_answers
+        let insert_sql = "INSERT INTO pavlov_answers
                (answer_norm, answer, meta_category, phrases, phrase_tiers, score, example_clue_ids, answer_freq)
-             VALUES ($1, $2, $3, $4, $5, $6, $7,
-                     (SELECT count(*) FROM jeopardy_questions jq
-                      WHERE jq.archived = false AND jq.question IS NOT NULL AND {NORM_EXPR} = $1))
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (answer_norm) DO UPDATE SET
                meta_category = EXCLUDED.meta_category,
                phrases = EXCLUDED.phrases,
                phrase_tiers = EXCLUDED.phrase_tiers,
                score = EXCLUDED.score,
                example_clue_ids = EXCLUDED.example_clue_ids,
-               answer_freq = EXCLUDED.answer_freq"
-        );
-        sqlx::query(&insert_sql)
+               answer_freq = EXCLUDED.answer_freq";
+        sqlx::query(insert_sql)
             .bind(norm)
             .bind(&answer_display)
             .bind(&category)
@@ -775,6 +781,7 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
             .bind(&tiers)
             .bind(score as f32)
             .bind(&example_ids)
+            .bind(*freq.get(norm.as_str()).unwrap_or(&1) as i32)
             .execute(&state.pool)
             .await?;
     }

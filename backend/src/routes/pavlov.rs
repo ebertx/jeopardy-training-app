@@ -573,7 +573,7 @@ pub async fn drill_next(
     let fetch_due = format!(
         "SELECT {cols} FROM pavlov_cards ca
          JOIN pavlov_answers pa ON pa.id = ca.answer_id
-         WHERE ca.user_id = $1 AND ca.suspended = false AND ca.due <= now()
+         WHERE ca.user_id = $1 AND ca.suspended = false AND ca.due <= now() AND {DRILLABLE_SQL}
          ORDER BY ca.due ASC LIMIT 1"
     );
 
