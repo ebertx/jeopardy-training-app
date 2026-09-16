@@ -7,14 +7,23 @@ use crate::auth::middleware::AuthUser;
 use crate::error::AppError;
 use crate::AppState;
 
-pub async fn generate(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-) -> Result<Json<Value>, AppError> {
+/// Admin-only, single-flight (shared `pavlov_inflight` flag for generate /
+/// resolve / hooks), fire-and-forget. `needs_key` gates jobs that call OpenAI.
+async fn spawn_admin_job<F, Fut>(
+    state: Arc<AppState>,
+    auth: &AuthUser,
+    name: &'static str,
+    needs_key: bool,
+    job: F,
+) -> Result<Json<Value>, AppError>
+where
+    F: FnOnce(Arc<AppState>) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), AppError>> + Send + 'static,
+{
     if auth.role != "admin" {
         return Err(AppError::Forbidden("Admin access required".into()));
     }
-    if state.config.openai_api_key.is_empty() {
+    if needs_key && state.config.openai_api_key.is_empty() {
         return Err(AppError::BadRequest("OPENAI_API_KEY not configured".into()));
     }
     if state
@@ -26,12 +35,26 @@ pub async fn generate(
     }
     let st = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = crate::pavlov::run_generation(&st).await {
-            tracing::error!("pavlov generation failed (resumable — rerun to continue): {e:?}");
+        if let Err(e) = job(st.clone()).await {
+            tracing::error!("pavlov {name} failed (resumable — rerun to continue): {e:?}");
         }
         st.pavlov_inflight.store(false, Ordering::SeqCst);
     });
     Ok(Json(json!({ "started": true })))
+}
+
+pub async fn generate(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<Value>, AppError> {
+    spawn_admin_job(state, &auth, "generation", true, |st| async move {
+        crate::pavlov::run_generation(&st).await
+    })
+    .await
+}
+
+pub async fn resolve(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<Value>, AppError> {
+    spawn_admin_job(state, &auth, "resolve", false, |st| async move {
+        crate::objects::run_resolve(&st).await
+    })
+    .await
 }
 
 pub async fn status(

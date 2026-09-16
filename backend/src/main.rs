@@ -11,6 +11,7 @@ mod activity;
 mod blend;
 mod entity;
 mod hooks;
+mod objects;
 mod pavlov;
 mod pavlov_stats;
 mod insights;
@@ -118,6 +119,7 @@ async fn run() {
         .route("/api/admin/users", get(routes::admin::list_users))
         .route("/api/admin/approve", post(routes::admin::approve))
         .route("/api/admin/pavlov/generate", post(routes::pavlov::generate))
+        .route("/api/admin/pavlov/resolve", post(routes::pavlov::resolve))
         .route("/api/admin/pavlov/status", get(routes::pavlov::status))
         .route("/api/pavlov/answers", get(routes::pavlov::answers))
         .route("/api/pavlov/answers/{id}/suspend", post(routes::pavlov::suspend))

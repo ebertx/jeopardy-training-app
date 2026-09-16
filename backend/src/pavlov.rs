@@ -298,8 +298,11 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::AppState;
 
-/// 0008's normalization of the response text, verbatim.
-const NORM_EXPR: &str = "lower(trim(regexp_replace(jq.question, '^(the|a|an) ', '', 'i')))";
+/// The entity key of a clue's response: `entity_norm` once the resolve job has
+/// run, else 0008's string normalization (so generation keeps working on a
+/// database that has never been resolved).
+const NORM_EXPR: &str =
+    "COALESCE(jq.entity_norm, lower(trim(regexp_replace(jq.question, '^(the|a|an) ', '', 'i'))))";
 
 // Thresholds fixed at the 2026-07-22 preview gate (spec §3).
 pub const BIGRAM_MIN_SUPPORT: i64 = 4;
@@ -328,7 +331,7 @@ async fn candidate_rows(state: &Arc<AppState>) -> Result<Vec<CueCandidate>, AppE
            SELECT {NORM_EXPR} AS norm
            FROM jeopardy_questions jq
            WHERE jq.archived = false AND jq.question IS NOT NULL
-           GROUP BY 1 HAVING max(jq.answer_freq) >= $5
+           GROUP BY 1 HAVING count(*) >= $5
          ), sup AS (
            SELECT g.answer_norm, g.gram, g.n, count(DISTINCT g.clue_id) AS support
            FROM pavlov_clue_ngrams g
@@ -352,7 +355,7 @@ async fn candidate_rows(state: &Arc<AppState>) -> Result<Vec<CueCandidate>, AppE
         .bind(BIGRAM_MIN_PREC)
         .bind(UNIGRAM_MIN_SUPPORT)
         .bind(UNIGRAM_MIN_PREC)
-        .bind(MIN_ANSWER_FREQ)
+        .bind(MIN_ANSWER_FREQ as i64)
         .fetch_all(&state.pool)
         .await?;
     Ok(rows
@@ -686,7 +689,7 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
     // of its standard cues were re-rendered as dropped since the last run).
     // pavlov_cards rows cascade off pavlov_answers.
     sqlx::query(
-        "DELETE FROM pavlov_answers WHERE answer_norm NOT IN
+        "DELETE FROM pavlov_answers WHERE vetted = false AND answer_norm NOT IN
            (SELECT DISTINCT answer_norm FROM pavlov_cues
             WHERE status = 'active' AND tier = 'standard')",
     )
@@ -748,29 +751,32 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
             .await?;
             ordered.into_iter().map(|(i,)| i).collect()
         };
-        sqlx::query(
+        // answer/forms/vetted are owned by objects::refresh_entity_rows; a
+        // rerun of resolve or hooks refreshes them for rows created here.
+        let insert_sql = format!(
             "INSERT INTO pavlov_answers
                (answer_norm, answer, meta_category, phrases, phrase_tiers, score, example_clue_ids, answer_freq)
              VALUES ($1, $2, $3, $4, $5, $6, $7,
-                     COALESCE((SELECT answer_freq FROM jeopardy_questions WHERE id = $7[1]), 1))
+                     (SELECT count(*) FROM jeopardy_questions jq
+                      WHERE jq.archived = false AND jq.question IS NOT NULL AND {NORM_EXPR} = $1))
              ON CONFLICT (answer_norm) DO UPDATE SET
-               answer = EXCLUDED.answer,
                meta_category = EXCLUDED.meta_category,
                phrases = EXCLUDED.phrases,
                phrase_tiers = EXCLUDED.phrase_tiers,
                score = EXCLUDED.score,
                example_clue_ids = EXCLUDED.example_clue_ids,
-               answer_freq = EXCLUDED.answer_freq",
-        )
-        .bind(norm)
-        .bind(&answer_display)
-        .bind(&category)
-        .bind(&phrases)
-        .bind(&tiers)
-        .bind(score as f32)
-        .bind(&example_ids)
-        .execute(&state.pool)
-        .await?;
+               answer_freq = EXCLUDED.answer_freq"
+        );
+        sqlx::query(&insert_sql)
+            .bind(norm)
+            .bind(&answer_display)
+            .bind(&category)
+            .bind(&phrases)
+            .bind(&tiers)
+            .bind(score as f32)
+            .bind(&example_ids)
+            .execute(&state.pool)
+            .await?;
     }
     tracing::info!("pavlov assemble: {} answer cards", answers.len());
     Ok(())
