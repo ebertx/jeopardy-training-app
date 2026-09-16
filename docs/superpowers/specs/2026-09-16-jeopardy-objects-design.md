@@ -135,14 +135,20 @@ Input: the entity's clues (via `entity_norm`) and their grams in
 `pavlov_clue_ngrams`.
 
 - **Seed grams:** support ≥ 2 within the entity AND distinctive in the
-  corpus: unigram corpus frequency ≤ 500, bigram ≤ 100
+  corpus: unigram corpus frequency ≤ 3000, bigram ≤ 300
   (`HOOK_UNIGRAM_MAX_DF`, `HOOK_BIGRAM_MAX_DF`, constants beside the v2
-  thresholds). For Visigoths this keeps alaric, ostrogoth, sack rome, 410,
-  711, spain, 507, alaric ii and drops "people", "king", "made".
+  thresholds; amended from 500 / 100 during planning — "spain" has corpus
+  frequency 1,254 and is the Visigoths' Spain angle). For Visigoths this
+  keeps alaric, ostrogoth, sack rome, 410, 711, spain, 507, alaric ii and
+  drops "people" (6,484), "king" (7,762), "made" (10,924).
+- **Clue assignment weight:** a clue joins the cluster whose grams present
+  in it carry the most inverse-document-frequency weight
+  (`ln(corpus_clues / df)`), ties to the larger cluster — so common-but-
+  relevant grams contribute less than rare ones without being dropped.
 - **Clustering:** each seed gram starts a cluster with its clue set. Two
   clusters merge when Jaccard(clue sets) ≥ 0.5 or one set contains the
   other. Then every clue is assigned to the cluster whose grams it matches
-  most. Clusters are ranked by member count, capped at 8
+  most (by idf weight, above). Clusters are ranked by member count, capped at 8
   (`HOOK_MAX_PER_ENTITY`), dropped below 2 members (`HOOK_MIN_SUPPORT`).
   Clues matching no cluster form no hook. An entity with one cluster is a
   one-hook card, which is what every card is today.
