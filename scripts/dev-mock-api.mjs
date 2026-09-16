@@ -42,6 +42,12 @@ const routes = {
   ] },
   '/api/blindspots': { configured: true, insufficientData: false, packs: [
     { id: 1, theme: 'Mythology', diagnosis: '' }, { id: 2, theme: 'Opera', diagnosis: '' }, { id: 3, theme: 'Fine Arts', diagnosis: '' } ] },
+  '/api/activity': { streak: 3, activeLast28: 11, days: Array.from({ length: 28 }, (_, i) => ({ date: isoDay(i - 27), active: [5, 6, 8, 12, 13, 16, 19, 20, 25, 26, 27].includes(i) })) },
+  '/api/pavlov/drill/next': { done: false, isNew: false, dueCount: 124, newRemaining: 40, card: { answerId: 1, answerNorm: 'wuthering heights', kind: 'answer', parent: null, category: 'Literature & Language', phrases: [{ text: 'Heathcliff', tier: 'standard' }, { text: 'Yorkshire moors', tier: 'hint' }] } },
+  '/api/pavlov/drill/check': { correct: null, answer: 'Wuthering Heights', answerNorm: 'wuthering heights', kind: 'answer', parent: null, examples: [{ clue: 'Heathcliff seeks revenge in this Emily Brontë novel', category: 'NOVELS', airDate: '2019-03-04' }] },
+  '/api/pavlov/drill/grade': { state: 'learning', due: new Date().toISOString(), intervalDays: 0, requeueInSession: true, factsAdded: 0 },
+  '/api/pavlov/facts': { added: 4 },
+  '/api/sheet/answer/wuthering%20heights': { answerNorm: 'wuthering heights', answer: 'Wuthering Heights', identity: "Emily Brontë's only novel (1847): Heathcliff and Catherine's doomed love on the Yorkshire moors.", facts: [{ prompt: 'author', response: 'Emily Brontë' }, { prompt: 'antihero', response: 'Heathcliff' }, { prompt: 'narrator', response: 'Nelly Dean' }, { prompt: 'year published', response: '1847' }], factsAdded: false },
   '/api/stats': {
     overall: kind(4321, 3300), cold: kind(2100, 1050), review: kind(2221, 1800), cold30d: kind(220, 118),
     mockReadiness: { tests: [{ id: 1, completedAt: '2026-07-20T00:00:00Z', score: 18 }, { id: 2, completedAt: '2026-07-23T00:00:00Z', score: 21 }], best: 21, latest: 21, passLine: 35 },

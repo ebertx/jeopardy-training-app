@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import StatsSection from '$lib/components/StatsSection.svelte';
   import PavlovProgressCard from '$lib/components/PavlovProgressCard.svelte';
+  import ActivityStrip, { type Activity } from '$lib/components/ActivityStrip.svelte';
   import type { CategoryStat, DailyStat, DeckStats, ForecastDay, KindStat, PavlovStats } from '$lib/stats';
 
   interface Stats {
@@ -53,6 +54,7 @@
   let stats = $state<Stats | null>(null);
   let srs = $state<SrsStatus | null>(null);
   let pavlov = $state<PavlovStats | null>(null);
+  let activity = $state<Activity | null>(null);
   let loading = $state(true);
   let error = $state('');
 
@@ -71,6 +73,7 @@
     api.get('/api/practice/status').then((s) => (srs = s)).catch(() => (srs = null));
     api.get('/api/pavlov/stats').then((s) => (pavlov = s)).catch(() => (pavlov = null));
     api.get('/api/blindspots').then((b) => (blindspots = b)).catch(() => (blindspots = null));
+    api.get('/api/activity').then((a) => (activity = a)).catch(() => (activity = null));
     try {
       stats = await api.get('/api/stats');
     } catch (err: any) {
@@ -98,6 +101,10 @@
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
       <h1 class="text-3xl font-bold text-jeopardy-blue">Dashboard</h1>
     </div>
+
+    {#if activity}
+      <ActivityStrip {activity} />
+    {/if}
 
     <div class="flex flex-wrap gap-3 mb-8">
       <a href="/pavlov" class="px-5 py-2.5 bg-jeopardy-gold text-jeopardy-blue font-semibold rounded-lg hover:bg-yellow-400 transition-colors">Pavlov Drill</a>
