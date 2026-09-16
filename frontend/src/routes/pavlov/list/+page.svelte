@@ -17,6 +17,7 @@
   type Card = {
     id: number; answer: string; category: string;
     phrases: Phrase[]; suspended: boolean;
+    kind: 'answer' | 'fact'; parent: string | null;
   };
   let cards = $state<Card[]>([]);
   let search = $state('');
@@ -164,7 +165,7 @@
                         <span class="text-xs text-gray-400">({phrase.support}/{phrase.total})</span>{/if}</span>
                   {/each}
                   <span class="text-gray-400 mx-1">→</span>
-                  <span>{card.answer}</span>
+                  <span>{#if card.kind === 'fact' && card.parent}<span class="text-gray-400 text-xs mr-1">↳ {card.parent} ·</span>{/if}{card.answer}</span>
                 </div>
               </div>
               <button

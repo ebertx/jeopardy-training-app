@@ -8,6 +8,7 @@
   import SessionSummary from '$lib/components/SessionSummary.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import CountdownTimer from '$lib/components/CountdownTimer.svelte';
+  import AnswerSheet, { type Sheet } from '$lib/components/AnswerSheet.svelte';
 
   const auth = getAuth();
 
@@ -40,6 +41,9 @@
   let insight = $state<{ insight: string; hook: string } | null>(null);
   let insightLoading = $state(false);
   let insightShown = $state(false); // Explain-on-correct inline display
+  let sheet = $state<Sheet | null>(null);
+  let sheetLoading = $state(false);
+  let sheetAddedNow = $state(0);
 
   // Incremented on every filter change; in-flight fetches/prefetches captured
   // before the change discard their results to avoid leaking old-filter data.
@@ -81,6 +85,8 @@
         pausedForInsight = false;
         insightShown = false;
         insight = null;
+        sheet = null;
+        sheetAddedNow = 0;
       } else {
         done = false;
         isNew = res.isNew;
@@ -88,6 +94,8 @@
         pausedForInsight = false;
         insightShown = false;
         insight = null;
+        sheet = null;
+        sheetAddedNow = 0;
       }
     } catch (err: any) {
       if (gen !== filterGen) return;
@@ -113,6 +121,7 @@
         // Teaching pause: stay on the card and show the insight.
         pausedForInsight = true;
         fetchInsight(question.id);
+        fetchSheet(question.id);
       } else {
         showAnswer = false;
         await fetchQuestion();
@@ -136,10 +145,36 @@
     }
   }
 
+  async function fetchSheet(questionId: number) {
+    sheet = null;
+    sheetAddedNow = 0;
+    sheetLoading = true;
+    try {
+      sheet = await api.get(`/api/sheet/question/${questionId}`);
+    } catch {
+      sheet = null;
+    } finally {
+      sheetLoading = false;
+    }
+  }
+
+  async function addSheetFacts() {
+    if (!sheet) return;
+    try {
+      const res = await api.post('/api/pavlov/facts', { answerNorm: sheet.answerNorm });
+      sheetAddedNow = res.added ?? 0;
+      sheet = { ...sheet, factsAdded: true };
+    } catch (err: any) {
+      error = err?.message ?? 'Could not add fact cards';
+    }
+  }
+
   async function advanceFromPause() {
     pausedForInsight = false;
     insight = null;
     insightShown = false;
+    sheet = null;
+    sheetAddedNow = 0;
     showAnswer = false;
     await fetchQuestion();
   }
@@ -373,6 +408,9 @@
                   <p class="text-white/90 text-sm leading-relaxed">{insight.insight}</p>
                   <p class="text-jeopardy-gold text-sm font-semibold mt-2">💡 {insight.hook}</p>
                 </div>
+              {/if}
+              {#if sheetLoading || sheet}
+                <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} addedNow={sheetAddedNow} onAddFacts={addSheetFacts} />
               {/if}
               <button
                 onclick={advanceFromPause}
