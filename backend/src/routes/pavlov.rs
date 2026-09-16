@@ -65,12 +65,6 @@ use crate::srs::{schedule, CardKind, Prev, Rating};
 
 const LEECH_LAPSES: i32 = 8; // same threshold as practice.rs
 
-/// Display answer of a fact card's parent: the deck row when it exists, else the
-/// answer sheet (practice misses can create facts for answers outside the deck).
-const PARENT_ANSWER_SQL: &str = "COALESCE(
-    (SELECT p2.answer FROM pavlov_answers p2 WHERE p2.answer_norm = pa.parent_norm),
-    (SELECT s.answer FROM answer_sheets s WHERE s.answer_norm = pa.parent_norm))";
-
 fn category_rank(cat: &str) -> usize {
     TARGET_WEIGHTS
         .iter()
@@ -88,27 +82,22 @@ struct AnswerListRow {
     phrase_tiers: Vec<String>,
     score: f32,
     suspended: bool,
-    kind: String,
-    parent: Option<String>,
 }
 
 pub async fn answers(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let answers_sql = format!(
+    let mut rows: Vec<AnswerListRow> = sqlx::query_as(
         "SELECT pa.id, pa.answer, pa.answer_norm, pa.meta_category, pa.phrases,
                 pa.phrase_tiers, pa.score,
-                COALESCE(ca.suspended, false) AS suspended,
-                pa.kind,
-                {PARENT_ANSWER_SQL} AS parent
+                COALESCE(ca.suspended, false) AS suspended
          FROM pavlov_answers pa
-         LEFT JOIN pavlov_cards ca ON ca.answer_id = pa.id AND ca.user_id = $1"
-    );
-    let mut rows: Vec<AnswerListRow> = sqlx::query_as(&answers_sql)
-        .bind(auth.user_id)
-        .fetch_all(&state.pool)
-        .await?;
+         LEFT JOIN pavlov_cards ca ON ca.answer_id = pa.id AND ca.user_id = $1",
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.pool)
+    .await?;
     rows.sort_by(|a, b| {
         category_rank(&a.meta_category)
             .cmp(&category_rank(&b.meta_category))
@@ -149,7 +138,6 @@ pub async fn answers(
             json!({
                 "id": r.id, "answer": r.answer, "category": r.meta_category,
                 "phrases": phrases, "suspended": r.suspended,
-                "kind": r.kind, "parent": r.parent,
             })
         })
         .collect();
@@ -191,8 +179,6 @@ pub async fn suspend(
 struct DrillAnswerRow {
     id: i32,
     answer_norm: String,
-    kind: String,
-    parent: Option<String>,
     phrases: Vec<String>,
     phrase_tiers: Vec<String>,
     meta_category: String,
@@ -206,18 +192,14 @@ fn drill_card_json(r: &DrillAnswerRow) -> Value {
         .map(|(text, tier)| json!({ "text": text, "tier": tier }))
         .collect();
     json!({
-        "answerId": r.id, "answerNorm": r.answer_norm, "kind": r.kind, "parent": r.parent,
+        "answerId": r.id, "answerNorm": r.answer_norm,
         "phrases": phrases, "category": r.meta_category,
     })
 }
 
-/// The SELECT list every drill query shares (parent = the parent's display answer).
-fn drill_cols() -> String {
-    format!(
-        "pa.id, pa.answer_norm, pa.kind,
-    {PARENT_ANSWER_SQL} AS parent,
-    pa.phrases, pa.phrase_tiers, pa.meta_category"
-    )
+/// The SELECT list every drill query shares.
+fn drill_cols() -> &'static str {
+    "pa.id, pa.answer_norm, pa.phrases, pa.phrase_tiers, pa.meta_category"
 }
 
 /// Category-weighted new-card pick: sample a meta-category by Anytime Test
@@ -230,8 +212,7 @@ async fn pick_new_card(
 ) -> Result<Option<DrillAnswerRow>, AppError> {
     let available: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT meta_category FROM pavlov_answers
-         WHERE kind = 'answer'
-           AND id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)",
+         WHERE id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)",
     )
     .bind(user_id)
     .fetch_all(&state.pool)
@@ -257,14 +238,13 @@ async fn pick_new_card(
     let cols = drill_cols();
     let pick_in_cat = format!(
         "SELECT {cols} FROM pavlov_answers pa
-         WHERE pa.meta_category = $2 AND pa.kind = 'answer'
+         WHERE pa.meta_category = $2
            AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
          ORDER BY pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
     );
     let pick_any = format!(
         "SELECT {cols} FROM pavlov_answers pa
-         WHERE pa.kind = 'answer'
-           AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
+         WHERE pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
          ORDER BY pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
     );
 
@@ -316,8 +296,7 @@ pub async fn drill_next(
     // as introduced new cards, so exclude last_review IS NULL rows here.
     let new_today: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
-         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL
-           AND pa.kind = 'answer'",
+         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL",
     )
     .bind(user_id)
     .bind(day_start)
@@ -340,9 +319,6 @@ pub async fn drill_next(
 
     if want_new {
         if let Some(row) = pick_new_card(&state, user_id).await? {
-            if row.kind == "answer" {
-                crate::sheets::pregenerate_sheet(&state, row.answer_norm.clone());
-            }
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": drill_card_json(&row),
                 "dueCount": due_count, "newRemaining": new_remaining,
@@ -354,9 +330,6 @@ pub async fn drill_next(
         .fetch_optional(&state.pool)
         .await?
     {
-        if row.kind == "answer" {
-            crate::sheets::pregenerate_sheet(&state, row.answer_norm.clone());
-        }
         return Ok(Json(json!({
             "done": false, "isNew": false, "card": drill_card_json(&row),
             "dueCount": due_count, "newRemaining": new_remaining,
@@ -364,9 +337,6 @@ pub async fn drill_next(
     }
     if new_remaining > 0 || extra {
         if let Some(row) = pick_new_card(&state, user_id).await? {
-            if row.kind == "answer" {
-                crate::sheets::pregenerate_sheet(&state, row.answer_norm.clone());
-            }
             return Ok(Json(json!({
                 "done": false, "isNew": true, "card": drill_card_json(&row),
                 "dueCount": due_count, "newRemaining": new_remaining,
@@ -391,8 +361,7 @@ pub async fn drill_next(
     // Unseen cards still exist → the frontend can offer "Keep going".
     let more_new_available: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pavlov_answers pa
-         WHERE pa.kind = 'answer'
-           AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1))",
+         WHERE pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1))",
     )
     .bind(user_id)
     .fetch_one(&state.pool)
@@ -419,18 +388,13 @@ pub async fn drill_check(
     _auth: AuthUser,
     Json(body): Json<CheckBody>,
 ) -> Result<Json<Value>, AppError> {
-    let check_sql = format!(
-        "SELECT pa.answer, pa.example_clue_ids, pa.answer_norm, pa.kind,
-                {PARENT_ANSWER_SQL}
-         FROM pavlov_answers pa WHERE pa.id = $1"
-    );
-    let row: Option<(String, Vec<i32>, String, String, Option<String>)> =
-        sqlx::query_as(&check_sql)
-            .bind(body.answer_id)
-            .fetch_optional(&state.pool)
-            .await?;
-    let (answer, example_ids, answer_norm, kind, parent) =
-        row.ok_or_else(|| AppError::NotFound("No such cue".into()))?;
+    let row: Option<(String, Vec<i32>, String)> = sqlx::query_as(
+        "SELECT pa.answer, pa.example_clue_ids, pa.answer_norm FROM pavlov_answers pa WHERE pa.id = $1",
+    )
+    .bind(body.answer_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (answer, example_ids, answer_norm) = row.ok_or_else(|| AppError::NotFound("No such cue".into()))?;
     let correct = body.typed.as_deref().map(|t| answer_match::is_correct(t, &answer));
 
     let examples: Vec<(String, Option<String>, Option<chrono::NaiveDate>)> = sqlx::query_as(
@@ -447,8 +411,7 @@ pub async fn drill_check(
         })
         .collect();
     Ok(Json(json!({
-        "correct": correct, "answer": answer, "answerNorm": answer_norm, "kind": kind,
-        "parent": parent, "examples": examples,
+        "correct": correct, "answer": answer, "answerNorm": answer_norm, "examples": examples,
     })))
 }
 
@@ -475,35 +438,6 @@ pub(crate) struct PavlovCardRow {
 /// NULL). Mirrors the `last_review IS NOT NULL` rule used for "new today".
 pub(crate) fn is_first_grade(existing: Option<&PavlovCardRow>) -> bool {
     existing.map_or(true, |r| r.last_review.is_none())
-}
-
-/// Look up the graded card's kind and the user's auto-add preference, and —
-/// only for a real answer with the preference on — add fact cards from the
-/// CACHED sheet (never generates: see `sheets::cached_sheet`). Returns 0 when
-/// the card is a fact, the preference is off, or no sheet is cached yet.
-async fn auto_add_facts(
-    state: &Arc<AppState>,
-    user_id: i32,
-    answer_id: i32,
-) -> Result<i64, AppError> {
-    let (kind, norm): (String, String) =
-        sqlx::query_as("SELECT kind, answer_norm FROM pavlov_answers WHERE id = $1")
-            .bind(answer_id)
-            .fetch_one(&state.pool)
-            .await?;
-    let auto: bool = sqlx::query_scalar("SELECT pavlov_auto_facts FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_one(&state.pool)
-        .await?;
-    if kind != "answer" || !auto {
-        return Ok(0);
-    }
-    if crate::sheets::cached_sheet(state, &norm).await?.is_none() {
-        return Ok(0);
-    }
-    Ok(crate::routes::pavlov_facts::add_fact_cards(state, user_id, &norm)
-        .await?
-        .unwrap_or(0))
 }
 
 /// SM-2 schedule for a cue card. Deliberately does NOT touch question_attempts
@@ -587,27 +521,11 @@ pub async fn drill_grade(
 
     tx.commit().await?;
 
-    // Auto-add fact cards on a Wrong for a real answer when the user opted in.
-    // Cache-only and error-swallowing: this must never turn an already-committed
-    // grade into a failed response, and must never block on LLM generation.
-    let facts_added: i64 = if rating == Rating::Wrong {
-        match auto_add_facts(&state, user_id, body.answer_id).await {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!("auto-add facts failed for answer {}: {e:?}", body.answer_id);
-                0
-            }
-        }
-    } else {
-        0
-    };
-
     Ok(Json(json!({
         "state": out.state.as_str(),
         "due": due,
         "intervalDays": out.interval_days,
         "requeueInSession": out.requeue_in_session,
-        "factsAdded": facts_added,
     })))
 }
 

@@ -174,8 +174,7 @@ pub async fn stats(
     .await?;
     let new_today: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
-         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL
-           AND pa.kind = 'answer'",
+         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL",
     )
     .bind(user_id)
     .bind(day_start)
@@ -216,10 +215,9 @@ pub async fn stats(
         .fetch_one(&state.pool)
         .await?;
     let deck_json_total = learning + maturing + mastered + struggling + banished;
-    // Deck coverage counts real answers only; fact cards are depth, not progress.
     let touched: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
-         WHERE ca.user_id = $1 AND pa.kind = 'answer'",
+         WHERE ca.user_id = $1",
     )
     .bind(user_id)
     .fetch_one(&state.pool)
@@ -278,13 +276,13 @@ pub async fn stats(
     });
 
     // --- progress toward the target date ------------------------------------
-    let deck_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pavlov_answers WHERE kind = 'answer'")
+    let deck_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pavlov_answers")
         .fetch_one(&state.pool)
         .await?;
     let window_start = day_start - Duration::days(13); // today + 13 prior local days
     let created_14d: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
-         WHERE ca.user_id = $1 AND ca.created_at >= $2 AND pa.kind = 'answer'",
+         WHERE ca.user_id = $1 AND ca.created_at >= $2",
     )
     .bind(user_id)
     .bind(window_start)

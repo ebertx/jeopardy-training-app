@@ -11,7 +11,6 @@ mod activity;
 mod blend;
 mod pavlov;
 mod pavlov_stats;
-mod sheets;
 mod insights;
 mod openai;
 mod routes;
@@ -29,10 +28,6 @@ pub struct AppState {
     pub insight_inflight: tokio::sync::Mutex<std::collections::HashSet<i32>>,
     pub blindspot_inflight: std::sync::atomic::AtomicBool,
     pub pavlov_inflight: std::sync::atomic::AtomicBool,
-    pub sheet_inflight: tokio::sync::Mutex<std::collections::HashSet<String>>,
-    /// Answer norms whose sheet generation was rejected (parser rejection or
-    /// empty corpus). Bounded by process lifetime only — a restart retries.
-    pub sheet_failed: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 fn main() {
@@ -71,8 +66,6 @@ async fn run() {
         insight_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         blindspot_inflight: std::sync::atomic::AtomicBool::new(false),
         pavlov_inflight: std::sync::atomic::AtomicBool::new(false),
-        sheet_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
-        sheet_failed: tokio::sync::Mutex::new(std::collections::HashSet::new()),
     });
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
@@ -92,8 +85,6 @@ async fn run() {
         .route("/api/practice/next", get(routes::practice::next))
         .route("/api/practice/status", get(routes::practice::status))
         .route("/api/insight/{id}", get(routes::insight::get_insight))
-        .route("/api/sheet/answer/{norm}", get(routes::sheet::by_answer))
-        .route("/api/sheet/question/{id}", get(routes::sheet::by_question))
         .route("/api/cards", get(routes::cards::list))
         .route("/api/drill/next", get(routes::drill::next))
         .route("/api/mastery/reset", post(routes::mastery::reset))
@@ -131,7 +122,6 @@ async fn run() {
         .route("/api/pavlov/drill/next", get(routes::pavlov::drill_next))
         .route("/api/pavlov/drill/check", post(routes::pavlov::drill_check))
         .route("/api/pavlov/drill/grade", post(routes::pavlov::drill_grade))
-        .route("/api/pavlov/facts", post(routes::pavlov_facts::add_facts))
         .route("/api/pavlov/stats", get(routes::pavlov_stats::stats))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("cache-control"),
