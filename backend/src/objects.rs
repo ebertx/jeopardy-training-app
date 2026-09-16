@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! Async jobs for Jeopardy objects (spec §5): entity resolution and hook
 //! mining. All pure logic lives in `entity.rs` / `hooks.rs`; this module is
 //! SQL and orchestration. Every job is idempotent and resumable.
@@ -56,6 +54,7 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
     // 2. merge deck rows: the old (0008) norms of an entity's forms may map to
     //    several pavlov_answers rows — keep one, move cards/reviews, re-key cues.
     let mut merged = 0usize;
+    let mut renamed = 0usize;
     for e in &entities {
         let old_norms: Vec<String> = e
             .forms
@@ -87,12 +86,17 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
                 .await?;
             sqlx::query("DELETE FROM pavlov_answers WHERE id = $1").bind(loser).execute(&mut *tx).await?;
         }
-        // cues: a loser cue with the same stem as a survivor cue would collide on
-        // UNIQUE (answer_norm, cue_stem) — drop it first, then re-key the rest.
+        // cues: UNIQUE (answer_norm, cue_stem) — among every cue row that will
+        // be re-keyed to e.key, keep one per stem (prefer the row already at
+        // the key, then higher support, then lowest id) and drop the rest.
         sqlx::query(
-            "DELETE FROM pavlov_cues c USING pavlov_cues k
-             WHERE c.answer_norm = ANY($1) AND c.answer_norm <> $2
-               AND k.answer_norm = $2 AND k.cue_stem = c.cue_stem",
+            "DELETE FROM pavlov_cues c USING (
+               SELECT id, row_number() OVER (
+                        PARTITION BY cue_stem
+                        ORDER BY (answer_norm = $2) DESC, support DESC, id) AS rn
+               FROM pavlov_cues WHERE answer_norm = ANY($1)
+             ) r
+             WHERE c.id = r.id AND r.rn > 1",
         )
         .bind(&old_norms)
         .bind(&e.key)
@@ -113,9 +117,13 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        merged += 1;
+        if losers.is_empty() {
+            renamed += 1;
+        } else {
+            merged += 1;
+        }
     }
-    tracing::info!("objects resolve: {merged} entities merged in the deck");
+    tracing::info!("objects resolve: {merged} entities merged, {renamed} rows re-keyed in the deck");
 
     // 3. n-grams: re-key every old norm that differs from its entity key
     let rekey: Vec<(String, String)> = entities
