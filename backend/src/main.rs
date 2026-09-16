@@ -30,6 +30,9 @@ pub struct AppState {
     pub blindspot_inflight: std::sync::atomic::AtomicBool,
     pub pavlov_inflight: std::sync::atomic::AtomicBool,
     pub sheet_inflight: tokio::sync::Mutex<std::collections::HashSet<String>>,
+    /// Answer norms whose sheet generation was rejected (parser rejection or
+    /// empty corpus). Bounded by process lifetime only — a restart retries.
+    pub sheet_failed: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 fn main() {
@@ -69,6 +72,7 @@ async fn run() {
         blindspot_inflight: std::sync::atomic::AtomicBool::new(false),
         pavlov_inflight: std::sync::atomic::AtomicBool::new(false),
         sheet_inflight: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+        sheet_failed: tokio::sync::Mutex::new(std::collections::HashSet::new()),
     });
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());

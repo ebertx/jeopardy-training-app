@@ -13,7 +13,14 @@ use crate::sheets;
 use crate::AppState;
 
 async fn respond(state: &Arc<AppState>, user_id: i32, answer_norm: &str) -> Result<Response, AppError> {
-    match sheets::ensure_sheet(state, answer_norm).await? {
+    let sheet = match sheets::ensure_sheet(state, answer_norm).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("sheet generation failed for {answer_norm}: {e:?}");
+            None
+        }
+    };
+    match sheet {
         Some(c) => {
             let added = sheets::facts_added(state, user_id, answer_norm).await?;
             let answer = sheets::display_answer(state, answer_norm)

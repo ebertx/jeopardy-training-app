@@ -167,6 +167,13 @@ pub async fn ensure_sheet(
     if state.config.openai_api_key.is_empty() {
         return Ok(None);
     }
+    // Negative cache: an answer whose generation was already rejected this
+    // process (parser rejection or empty corpus) is not retried on every
+    // serve. Bounded by process lifetime only — a restart retries. Never
+    // tombstoned in the database; a future model or corpus change may succeed.
+    if state.sheet_failed.lock().await.contains(answer_norm) {
+        return Ok(None);
+    }
     {
         let mut inflight = state.sheet_inflight.lock().await;
         if !inflight.insert(answer_norm.to_string()) {
@@ -204,7 +211,8 @@ pub async fn cached_sheet(state: &Arc<AppState>, answer_norm: &str) -> Result<Op
     read_cached(state, answer_norm).await
 }
 
-/// Display answer for a norm: the Pavlov deck's display form when present.
+/// Display answer for a norm: the answer stored with the sheet (the deck's
+/// display form when the deck row existed at generation time).
 pub async fn display_answer(state: &Arc<AppState>, answer_norm: &str) -> Result<Option<String>, AppError> {
     let s: Option<String> = sqlx::query_scalar(
         "SELECT answer FROM answer_sheets WHERE answer_norm = $1",
@@ -256,6 +264,7 @@ async fn generate_and_store(
     .fetch_all(&state.pool)
     .await?;
     if all.is_empty() {
+        state.sheet_failed.lock().await.insert(answer_norm.to_string());
         return Ok(None);
     }
     let picked = sample_evenly(&all, 15);
@@ -269,11 +278,18 @@ async fn generate_and_store(
     .await?;
     let (answer, category, phrases) = match parent {
         Some(p) => (p.answer, p.meta_category, p.phrases),
-        None => (
-            all[all.len() - 1].response.clone().unwrap_or_else(|| answer_norm.to_string()),
-            all[all.len() - 1].classifier_category.clone().unwrap_or_else(|| "Miscellaneous".to_string()),
-            vec![],
-        ),
+        None => {
+            // Prefer the latest DATED clue as the fallback display row; `all`
+            // is ordered by air_date (NULLs last in Postgres), so an
+            // undated row would otherwise win as "last" despite not being
+            // the most recent.
+            let fallback = all.iter().rev().find(|c| c.year.is_some()).unwrap_or(&all[all.len() - 1]);
+            (
+                fallback.response.clone().unwrap_or_else(|| answer_norm.to_string()),
+                fallback.classifier_category.clone().unwrap_or_else(|| "Miscellaneous".to_string()),
+                vec![],
+            )
+        }
     };
     let clues: Vec<GroundingClue> = picked
         .into_iter()
@@ -297,6 +313,7 @@ async fn generate_and_store(
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("sheet rejected for {answer_norm}: {e}");
+            state.sheet_failed.lock().await.insert(answer_norm.to_string());
             return Ok(None);
         }
     };

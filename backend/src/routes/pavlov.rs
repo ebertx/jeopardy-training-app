@@ -65,6 +65,12 @@ use crate::srs::{schedule, CardKind, Prev, Rating};
 
 const LEECH_LAPSES: i32 = 8; // same threshold as practice.rs
 
+/// Display answer of a fact card's parent: the deck row when it exists, else the
+/// answer sheet (practice misses can create facts for answers outside the deck).
+const PARENT_ANSWER_SQL: &str = "COALESCE(
+    (SELECT p2.answer FROM pavlov_answers p2 WHERE p2.answer_norm = pa.parent_norm),
+    (SELECT s.answer FROM answer_sheets s WHERE s.answer_norm = pa.parent_norm))";
+
 fn category_rank(cat: &str) -> usize {
     TARGET_WEIGHTS
         .iter()
@@ -90,18 +96,19 @@ pub async fn answers(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
 ) -> Result<Json<Value>, AppError> {
-    let mut rows: Vec<AnswerListRow> = sqlx::query_as(
+    let answers_sql = format!(
         "SELECT pa.id, pa.answer, pa.answer_norm, pa.meta_category, pa.phrases,
                 pa.phrase_tiers, pa.score,
                 COALESCE(ca.suspended, false) AS suspended,
                 pa.kind,
-                (SELECT p2.answer FROM pavlov_answers p2 WHERE p2.answer_norm = pa.parent_norm) AS parent
+                {PARENT_ANSWER_SQL} AS parent
          FROM pavlov_answers pa
-         LEFT JOIN pavlov_cards ca ON ca.answer_id = pa.id AND ca.user_id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_all(&state.pool)
-    .await?;
+         LEFT JOIN pavlov_cards ca ON ca.answer_id = pa.id AND ca.user_id = $1"
+    );
+    let mut rows: Vec<AnswerListRow> = sqlx::query_as(&answers_sql)
+        .bind(auth.user_id)
+        .fetch_all(&state.pool)
+        .await?;
     rows.sort_by(|a, b| {
         category_rank(&a.meta_category)
             .cmp(&category_rank(&b.meta_category))
@@ -205,9 +212,13 @@ fn drill_card_json(r: &DrillAnswerRow) -> Value {
 }
 
 /// The SELECT list every drill query shares (parent = the parent's display answer).
-const DRILL_COLS: &str = "pa.id, pa.answer_norm, pa.kind,
-    (SELECT p2.answer FROM pavlov_answers p2 WHERE p2.answer_norm = pa.parent_norm) AS parent,
-    pa.phrases, pa.phrase_tiers, pa.meta_category";
+fn drill_cols() -> String {
+    format!(
+        "pa.id, pa.answer_norm, pa.kind,
+    {PARENT_ANSWER_SQL} AS parent,
+    pa.phrases, pa.phrase_tiers, pa.meta_category"
+    )
+}
 
 /// Category-weighted new-card pick: sample a meta-category by Anytime Test
 /// share (restricted to categories that still have unseen cards for this
@@ -243,14 +254,15 @@ async fn pick_new_card(
     // Measured on the 2026-09-15 deck: the first 1,100 draws under this order
     // carry ~66% of the remaining frequency mass (uniform: 30%, proportional
     // race: 52%). Variety still comes from the category sampling above.
+    let cols = drill_cols();
     let pick_in_cat = format!(
-        "SELECT {DRILL_COLS} FROM pavlov_answers pa
+        "SELECT {cols} FROM pavlov_answers pa
          WHERE pa.meta_category = $2 AND pa.kind = 'answer'
            AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
          ORDER BY pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
     );
     let pick_any = format!(
-        "SELECT {DRILL_COLS} FROM pavlov_answers pa
+        "SELECT {cols} FROM pavlov_answers pa
          WHERE pa.kind = 'answer'
            AND pa.id NOT IN (SELECT answer_id FROM pavlov_cards WHERE user_id = $1)
          ORDER BY pa.answer_freq DESC, pa.score DESC, pa.id LIMIT 1"
@@ -318,8 +330,9 @@ pub async fn drill_next(
         serve_new(new_remaining, due_count, rand::rng().random())
     };
 
+    let cols = drill_cols();
     let fetch_due = format!(
-        "SELECT {DRILL_COLS} FROM pavlov_cards ca
+        "SELECT {cols} FROM pavlov_cards ca
          JOIN pavlov_answers pa ON pa.id = ca.answer_id
          WHERE ca.user_id = $1 AND ca.suspended = false AND ca.due <= now()
          ORDER BY ca.due ASC LIMIT 1"
@@ -406,14 +419,16 @@ pub async fn drill_check(
     _auth: AuthUser,
     Json(body): Json<CheckBody>,
 ) -> Result<Json<Value>, AppError> {
-    let row: Option<(String, Vec<i32>, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT answer, example_clue_ids, answer_norm, kind,
-                (SELECT p2.answer FROM pavlov_answers p2 WHERE p2.answer_norm = pavlov_answers.parent_norm)
-         FROM pavlov_answers WHERE id = $1",
-    )
-    .bind(body.answer_id)
-    .fetch_optional(&state.pool)
-    .await?;
+    let check_sql = format!(
+        "SELECT pa.answer, pa.example_clue_ids, pa.answer_norm, pa.kind,
+                {PARENT_ANSWER_SQL}
+         FROM pavlov_answers pa WHERE pa.id = $1"
+    );
+    let row: Option<(String, Vec<i32>, String, String, Option<String>)> =
+        sqlx::query_as(&check_sql)
+            .bind(body.answer_id)
+            .fetch_optional(&state.pool)
+            .await?;
     let (answer, example_ids, answer_norm, kind, parent) =
         row.ok_or_else(|| AppError::NotFound("No such cue".into()))?;
     let correct = body.typed.as_deref().map(|t| answer_match::is_correct(t, &answer));

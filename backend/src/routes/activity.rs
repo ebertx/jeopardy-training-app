@@ -27,14 +27,26 @@ pub async fn activity(
 
     // One row per local day in the window; active when any attempt, Pavlov
     // review, or (pre-review-log history) Pavlov card creation/review landed
-    // on that day.
+    // on that day. Each branch is bounded to the window (one day wider, to
+    // absorb the timezone conversion) so the scan doesn't cover the user's
+    // entire history; UNION ALL is safe (not just faster) because EXISTS
+    // only cares whether any row matches, so cross-branch duplicates are
+    // irrelevant.
     let rows: Vec<(NaiveDate, bool)> = sqlx::query_as(
         "WITH d AS (SELECT generate_series($2::date - ($4::int - 1), $2::date, '1 day')::date AS day),
          act AS (
-           SELECT (answered_at AT TIME ZONE $3)::date AS day FROM question_attempts WHERE user_id = $1
-           UNION SELECT (reviewed_at AT TIME ZONE $3)::date FROM pavlov_reviews WHERE user_id = $1
-           UNION SELECT (created_at AT TIME ZONE $3)::date FROM pavlov_cards WHERE user_id = $1
-           UNION SELECT (last_review AT TIME ZONE $3)::date FROM pavlov_cards WHERE user_id = $1 AND last_review IS NOT NULL)
+           SELECT (answered_at AT TIME ZONE $3)::date AS day FROM question_attempts
+           WHERE user_id = $1 AND answered_at >= ($2::date - $4::int)::timestamp AT TIME ZONE $3
+           UNION ALL
+           SELECT (reviewed_at AT TIME ZONE $3)::date FROM pavlov_reviews
+           WHERE user_id = $1 AND reviewed_at >= ($2::date - $4::int)::timestamp AT TIME ZONE $3
+           UNION ALL
+           SELECT (created_at AT TIME ZONE $3)::date FROM pavlov_cards
+           WHERE user_id = $1 AND created_at >= ($2::date - $4::int)::timestamp AT TIME ZONE $3
+           UNION ALL
+           SELECT (last_review AT TIME ZONE $3)::date FROM pavlov_cards
+           WHERE user_id = $1 AND last_review IS NOT NULL
+             AND last_review >= ($2::date - $4::int)::timestamp AT TIME ZONE $3)
          SELECT d.day, EXISTS (SELECT 1 FROM act WHERE act.day = d.day) AS active
          FROM d ORDER BY d.day",
     )

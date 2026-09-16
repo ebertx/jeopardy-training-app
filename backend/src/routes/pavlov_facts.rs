@@ -54,7 +54,8 @@ pub async fn add_fact_cards(
                         COALESCE(array_agg(id ORDER BY air_date DESC), '{}')
                  FROM (SELECT classifier_category, answer_freq, id, air_date FROM jeopardy_questions
                        WHERE lower(trim(regexp_replace(question, '^(the|a|an) ', '', 'i'))) = $1
-                         AND archived = false LIMIT 5) q",
+                         AND archived = false
+                       ORDER BY air_date DESC NULLS LAST LIMIT 5) q",
             )
             .bind(answer_norm)
             .fetch_one(&state.pool)
@@ -69,6 +70,7 @@ pub async fn add_fact_cards(
     };
 
     let mut added = 0i64;
+    let mut tx = state.pool.begin().await?;
     for (i, fact) in sheet.facts.iter().enumerate() {
         let norm = fact_norm(answer_norm, i + 1);
         let answer_id: i32 = sqlx::query_scalar(
@@ -89,7 +91,7 @@ pub async fn add_fact_cards(
         .bind(&parent.example_clue_ids)
         .bind(parent.answer_freq)
         .bind(answer_norm)
-        .fetch_one(&state.pool)
+        .fetch_one(&mut *tx)
         .await?;
         let res = sqlx::query(
             "INSERT INTO pavlov_cards (user_id, answer_id) VALUES ($1, $2)
@@ -97,10 +99,11 @@ pub async fn add_fact_cards(
         )
         .bind(user_id)
         .bind(answer_id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
         added += res.rows_affected() as i64;
     }
+    tx.commit().await?;
     Ok(Some(added))
 }
 
