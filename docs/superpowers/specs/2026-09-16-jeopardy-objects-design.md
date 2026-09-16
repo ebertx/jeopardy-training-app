@@ -51,27 +51,43 @@ picks the angles and drifts back to biography); C, raw gram stems as cues
 
 ### Resolution rules
 
+Amended during execution after a dry run over the live corpus (155,851
+response forms): the original "parenthetical license" merged different
+people and places under one surname (George, Denzel and Booker T.
+Washington plus the place; London with Jack London; Chicago with the
+University of Chicago). The rules below replace it.
+
 Applied to `jeopardy_questions.question` (the response) for every clue with
 `archived = false`:
 
-1. Strip parenthesised segments and the honorifics `Sir` and `Dame`, then
-   apply the existing article-strip normalisation
-   (`lower(trim(regexp_replace(x, '^(the|a|an) ', '', 'i')))`).
-   "(Edvard) Grieg", "Edvard Grieg", "Grieg" → key `grieg`;
-   "(Sir Edward) Elgar", "Sir Edward Elgar" → `elgar`.
-2. A bare form merges with a full-name form only when the corpus contains a
-   parenthetical form with that same first name: "(Edvard) Grieg" licenses
-   merging "Grieg" with "Edvard Grieg". Nothing licenses "Mexico" with
-   "New Mexico", "London" with "Jack London", "Washington" with
-   "Denzel Washington", so those stay separate. Different first names never
-   merge ("Edward Grieg", a 2-clue misspelling, stays out).
-3. Entity display name = the most frequent full form ("Edvard Grieg").
-   Entity key = the short normalised form (`grieg`). Entity frequency = the
-   sum over merged forms.
+1. **Parentheticals.** A parenthetical that LEADS the response and whose
+   content is name-like (letters, spaces, `.`, `-`, `'`, `"`, `&`) is part
+   of the name: "(George) Washington" → George Washington, "(Sir Edward)
+   Elgar" → Sir Edward Elgar, "(University of) Chicago" → University of
+   Chicago. Every other parenthetical is an annotation and is dropped:
+   "Andrew Jackson (Old Hickory)" → Andrew Jackson, "Mexico (Mexico City)"
+   → Mexico, "(1 of) Spain (or Portugal)" → Spain. Quote characters are
+   never touched in corpus responses (the corpus stores titles as
+   `\"The Raven\"`); only the vetted-list import strips quoted nicknames.
+2. **Key = the full name.** `entity_key` = strip parentheticals as above →
+   strip one leading `Sir`/`Dame` → the existing article-strip
+   normalisation. "(Edvard) Grieg" and "Edvard Grieg" → `edvard grieg`;
+   "Grieg" → `grieg`. A response that strips to nothing (or a bare article)
+   keeps its plain string norm as its key.
+3. **Bare-surname absorption, two guards.** A single-token key `s` is
+   absorbed into `f s` only when exactly ONE first name `f` is licensed for
+   `s` by some "(F) S" form, AND the bare form is not the dominant usage
+   (`count(s) ≤ Σ count(forms keyed f s)`). Grieg (11 ≤ 38) merges; London
+   (296 > 87) stays the city; Beethoven (150 > 80) stays split from Ludwig
+   van Beethoven — a missed merge, never a wrong one.
+4. **Display** = the most frequent stripped form among the forms whose own
+   key equals the entity key ("France", not "the France"; "Sir Edward Elgar"
+   because the honorific forms outnumber "Edward Elgar"). Frequency = the
+   sum over merged forms; `forms` = raw strings by count desc.
 
-Acceptance test: the 655 JBoard responses (see §2). Deck coverage is 280
-today; the verify script reports the number after resolution, and the 50
-highest-frequency merges are listed for hand review before hooks are built.
+Acceptance test: the 655 JBoard responses (see §2), plus the dry-run harness
+over the live corpus during rollout: no bare surname may absorb more than
+one person, and the 50 highest-frequency merges are hand-reviewed.
 
 ### Migration 0016
 
