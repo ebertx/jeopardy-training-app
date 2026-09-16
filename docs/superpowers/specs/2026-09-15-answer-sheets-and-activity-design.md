@@ -59,7 +59,8 @@ Fact-card rows in `pavlov_answers`:
 Every existing consumer of `pavlov_answers` must decide what facts mean to it:
 
 - `pick_new_card` and the generation stale-cleanup (`DELETE ... WHERE answer_norm NOT IN (...)`) filter `kind = 'answer'` — facts are never introduced by the daily allowance and never deleted by regeneration.
-- Deck progress `deckTotal` counts `kind = 'answer'` only. `touched` counts the user's `pavlov_cards` whose answer is `kind = 'answer'`. Fact cards are extra depth, not deck coverage.
+- Deck progress `deckTotal` counts `kind = 'answer'` only. `touched` counts the user's `pavlov_cards` whose answer is `kind = 'answer'`, and the trailing-14-day pace (`created_14d`) likewise counts only `kind = 'answer'` cards, so pace and remaining share a unit. Fact cards are extra depth, not deck coverage.
+- The daily new-card allowance (`new_today` in `drill_next` and `/api/pavlov/stats`) counts only `kind = 'answer'` cards, so fact cards never consume it, graded or not.
 - Deck buckets, forecast, due counts, review log, category rollups include facts (they are real reviews in the queue).
 - `/pavlov/list` shows facts under their category with the parent label.
 
@@ -97,7 +98,7 @@ Prefetch: `drill_next` spawns `ensure_sheet` for the served card (fire-and-forge
 | `GET /api/sheet/question/{question_id}` | resolves the clue's normalized response, then as above |
 | `POST /api/pavlov/facts` `{ answerNorm }` | upserts the 4 fact rows (`ON CONFLICT (answer_norm) DO UPDATE` the content) and inserts a `pavlov_cards` row (due now, learning) for each the user lacks. Returns `{ added }`. Idempotent. 404 when no sheet exists. |
 | `drill_next`, `drill_check` | responses gain `kind` and, for facts, `parent` (display answer) |
-| `drill_grade` | when `rating = wrong`, `kind = answer`, and `users.pavlov_auto_facts`, performs the fact insert server-side before responding; response gains `factsAdded: n` |
+| `drill_grade` | when `rating = wrong`, `kind = answer`, and `users.pavlov_auto_facts`, performs the fact insert server-side before responding, using the CACHED sheet only (it never generates or polls inside the grade request, and any error is logged and yields 0 so a committed grade can never fail); response gains `factsAdded: n`. If the sheet is not cached yet the pause shows "Drill these 4" instead |
 | preferences | `pavlovAutoFacts` read/write |
 | `GET /api/activity` | `{ streak, activeLast28, days: [{ date, active }] × 28 }` in the user's zone |
 
