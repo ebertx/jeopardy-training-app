@@ -16,6 +16,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && cargo build --release && r
 
 # Copy real source + frontend build
 COPY backend/src ./src
+COPY backend/data ./data
 COPY --from=frontend-build /app/frontend/build ./static
 
 # Build (uses runtime queries, no SQLX_OFFLINE needed)
