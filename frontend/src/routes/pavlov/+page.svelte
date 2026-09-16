@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { api } from '$lib/api';
   import CountdownTimer from '$lib/components/CountdownTimer.svelte';
-  import AnswerSheet, { type Sheet } from '$lib/components/AnswerSheet.svelte';
+  import HookMap, { type Hook, type ExampleClue } from '$lib/components/HookMap.svelte';
 
   const auth = getAuth();
   $effect(() => {
@@ -14,10 +14,11 @@
   let card = $state<{
     answerId: number;
     answerNorm: string;
-    kind: 'answer' | 'fact';
-    parent: string | null;
-    phrases: Array<{ text: string; tier: string }>;
     category: string;
+    phrases: Array<{ text: string; tier: string }>;
+    hookId: number | null;
+    hookRank: number | null;
+    cue: string | null;
   } | null>(null);
   let isNew = $state(false);
   let dueCount = $state(0);
@@ -29,8 +30,10 @@
   let extraMode = $state(false); // past-allowance drilling; resets on reload
   let result = $state<{
     answer: string;
-    kind: 'answer' | 'fact';
-    parent: string | null;
+    forms: string[];
+    hooks: Hook[];
+    servedHookId: number | null;
+    exampleClue: ExampleClue | null;
     examples: Array<{ clue: string; category: string | null; airDate: string | null }>;
   } | null>(null);
   let loading = $state(true);
@@ -38,22 +41,10 @@
   let error = $state('');
   let session = $state({ total: 0, correct: 0 });
 
-  // Answer sheet: shown on demand (e) after reveal, and automatically on a
-  // Wrong for a real answer card (paused until Next).
-  let sheet = $state<Sheet | null>(null);
-  let sheetLoading = $state(false);
-  let sheetOpen = $state(false);
-  let paused = $state(false);
-  let addedNow = $state(0);
-
   async function fetchNext() {
     loading = true;
     error = '';
     result = null;
-    sheet = null;
-    sheetOpen = false;
-    paused = false;
-    addedNow = 0;
     try {
       const res = await api.get(`/api/pavlov/drill/next${extraMode ? '?extra=true' : ''}`);
       dueCount = res.dueCount ?? 0;
@@ -81,7 +72,7 @@
     submitting = true;
     error = '';
     try {
-      result = await api.post('/api/pavlov/drill/check', { answerId: card.answerId });
+      result = await api.post('/api/pavlov/drill/check', { answerId: card.answerId, hookId: card.hookId });
     } catch (e: any) {
       error = e.message || 'Reveal failed';
     } finally {
@@ -89,66 +80,18 @@
     }
   }
 
-  async function fetchSheet() {
-    if (!card || card.kind !== 'answer' || sheet || sheetLoading) return;
-    sheetLoading = true;
-    try {
-      sheet = await api.get(`/api/sheet/answer/${encodeURIComponent(card.answerNorm)}`);
-    } catch {
-      sheet = null; // no key / rejected sheet: nothing to show
-    } finally {
-      sheetLoading = false;
-    }
-  }
-
-  function toggleSheet() {
-    if (paused || !result || !card || card.kind !== 'answer') return;
-    sheetOpen = !sheetOpen;
-    if (sheetOpen) fetchSheet();
-  }
-
-  async function addFacts() {
-    if (!card) return;
-    try {
-      const res = await api.post('/api/pavlov/facts', { answerNorm: card.answerNorm });
-      addedNow = res.added ?? 0;
-      if (sheet) sheet = { ...sheet, factsAdded: true };
-    } catch (e: any) {
-      error = e.message || 'Could not add fact cards';
-    }
-  }
-
   async function grade(rating: 'wrong' | 'got_it' | 'too_easy') {
-    if (!card || submitting || paused) return;
+    if (!card || submitting) return;
     submitting = true;
     try {
-      const res = await api.post('/api/pavlov/drill/grade', { answerId: card.answerId, rating });
+      await api.post('/api/pavlov/drill/grade', { answerId: card.answerId, rating, hookId: card.hookId });
       session = {
         total: session.total + 1,
         correct: session.correct + (rating === 'wrong' ? 0 : 1),
       };
-      if (rating === 'wrong' && card.kind === 'answer') {
-        // Teaching pause: stay on the card with the sheet open.
-        paused = true;
-        sheetOpen = true;
-        addedNow = res.factsAdded ?? 0;
-        await fetchSheet();
-        if (addedNow > 0 && sheet) sheet = { ...sheet, factsAdded: true };
-      } else {
-        await fetchNext();
-      }
+      await fetchNext();
     } catch (e: any) {
       error = e.message || 'Grade failed';
-    } finally {
-      submitting = false;
-    }
-  }
-
-  async function advance() {
-    if (!paused || submitting) return;
-    submitting = true;
-    try {
-      await fetchNext();
     } finally {
       submitting = false;
     }
@@ -167,26 +110,34 @@
     }
   }
 
-  // Space/Enter reveals (or advances while paused); 1/2/3 self-grade after
-  // reveal (honesty mode); b banishes anytime; e toggles the sheet; d adds facts.
+  // Drop the served hook (deck-level, like banish) and move on without grading.
+  async function dropHook(id: number) {
+    if (!card || submitting) return;
+    submitting = true;
+    try {
+      await api.post(`/api/pavlov/hooks/${id}/drop`);
+      await fetchNext();
+    } catch (e: any) {
+      error = e.message || 'Drop failed';
+    } finally {
+      submitting = false;
+    }
+  }
+
+  // Space/Enter reveals; 1/2/3 self-grade after reveal (honesty mode);
+  // b banishes anytime; x drops the served hook after reveal.
   function onKeydown(e: KeyboardEvent) {
     if (!card || submitting || loading) return;
     if (e.key === 'b' || e.key === 'B') {
       e.preventDefault();
       banish();
-    } else if (paused && (e.key === ' ' || e.key === 'Enter')) {
-      e.preventDefault();
-      advance();
     } else if (!result && (e.key === ' ' || e.key === 'Enter')) {
       e.preventDefault();
       reveal();
-    } else if (result && (e.key === 'e' || e.key === 'E')) {
+    } else if (result && (e.key === 'x' || e.key === 'X')) {
       e.preventDefault();
-      toggleSheet();
-    } else if (result && (e.key === 'd' || e.key === 'D')) {
-      e.preventDefault();
-      if (sheet && !sheet.factsAdded) addFacts();
-    } else if (result && !paused) {
+      if (card.hookId !== null) dropHook(card.hookId);
+    } else if (result) {
       if (e.key === '1') grade('wrong');
       else if (e.key === '2') grade('got_it');
       else if (e.key === '3') grade('too_easy');
@@ -216,9 +167,8 @@
       </div>
     </div>
     <p class="text-sm text-gray-500 mb-6">
-      Trigger keywords → answer. Train the reflex, not the clue. Wrong pauses on the answer sheet;
-      e opens it any time, d drills its four facts. Banish (b) removes a bad card —
-      undo on the list page.
+      One cue → answer. Each review shows a different angle of the same answer; the reveal shows all of them.
+      Banish (b) removes a card, x drops the shown angle — undo both on the list page.
       <a href="/pavlov/list" class="text-jeopardy-blue hover:underline">Browse the list →</a>
     </p>
 
@@ -270,19 +220,20 @@
           </div>
         </div>
 
-        <!-- Cue phrases (the question); fact cards name their parent answer -->
+        <!-- The cue: one hook's label, or the legacy phrases while an entity has no labeled hook -->
         <div class="flex flex-col items-center justify-center px-6 py-8 gap-3">
-          {#if card.kind === 'fact' && card.parent}
-            <p class="text-sm text-white/60">↳ {card.parent}</p>
+          {#if card.cue}
+            <span class="px-4 py-2 rounded-full border border-white/25 text-jeopardy-gold text-xl sm:text-2xl font-bold inline-block text-center">{card.cue}</span>
+          {:else}
+            <div class="flex flex-wrap gap-2 justify-center">
+              {#each card.phrases as phrase}
+                <span class="px-4 py-2 rounded-full border text-xl sm:text-2xl font-bold inline-block
+                  {phrase.tier === 'hint'
+                    ? 'border-white/10 text-white/50'
+                    : 'border-white/25 text-jeopardy-gold'}">{phrase.text}</span>
+              {/each}
+            </div>
           {/if}
-          <div class="flex flex-wrap gap-2 justify-center">
-            {#each card.phrases as phrase}
-              <span class="px-4 py-2 rounded-full border text-xl sm:text-2xl font-bold inline-block
-                {phrase.tier === 'hint'
-                  ? 'border-white/10 text-white/50'
-                  : 'border-white/25 text-jeopardy-gold'}">{phrase.text}</span>
-            {/each}
-          </div>
         </div>
 
         <div class="px-6 pb-4">
@@ -297,58 +248,33 @@
             <p class="mt-2 text-center text-xs text-white/40">Space / Enter</p>
           {:else}
             <div class="bg-white rounded-xl px-5 py-4 mb-4 text-center">
-              {#if result.kind === 'fact' && result.parent}
-                <p class="text-xs text-gray-500 mb-1">↳ {result.parent}</p>
-              {/if}
               <p class="text-gray-900 font-bold text-xl">{result.answer}</p>
             </div>
-            {#snippet sheetPanel()}
-              {#if !sheetLoading && sheet === null}
-                <p class="text-white/50 text-sm text-center">No answer sheet for this one.</p>
-              {:else}
-                <AnswerSheet {sheet} loading={sheetLoading} factsAdded={sheet?.factsAdded ?? false} {addedNow} onAddFacts={addFacts} />
+            <div class="grid grid-cols-3 gap-2">
+              <button onclick={() => grade('wrong')} disabled={submitting}
+                class="py-3 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Wrong</button>
+              <button onclick={() => grade('got_it')} disabled={submitting}
+                class="py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Got it</button>
+              <button onclick={() => grade('too_easy')} disabled={submitting}
+                class="py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Too easy</button>
+            </div>
+            <p class="mt-2 text-center text-xs text-white/40">1 / 2 / 3</p>
+            <div class="mt-4 pt-4 border-t border-white/10">
+              {#if result.hooks.length > 0}
+                <HookMap
+                  entity={{ answer: result.answer, forms: result.forms, hooks: result.hooks }}
+                  servedHookId={result.servedHookId}
+                  exampleClue={result.exampleClue}
+                  onDrop={dropHook}
+                />
+              {:else if result.examples.length > 0}
+                <div class="text-sm text-white/80 space-y-2">
+                  {#each result.examples as ex}
+                    <p>"{ex.clue}" <span class="text-white/50">({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</span></p>
+                  {/each}
+                </div>
               {/if}
-            {/snippet}
-            {#if paused}
-              <div class="flex flex-col gap-3">
-                {@render sheetPanel()}
-                <button
-                  onclick={advance}
-                  class="w-full py-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-semibold text-lg transition-colors"
-                >
-                  Next →
-                </button>
-                <p class="text-center text-xs text-white/40">Space / Enter</p>
-              </div>
-            {:else}
-              <div class="grid grid-cols-3 gap-2">
-                <button onclick={() => grade('wrong')} disabled={submitting}
-                  class="py-3 rounded-xl bg-red-500 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Wrong</button>
-                <button onclick={() => grade('got_it')} disabled={submitting}
-                  class="py-3 rounded-xl bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Got it</button>
-                <button onclick={() => grade('too_easy')} disabled={submitting}
-                  class="py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-base transition-colors">Too easy</button>
-              </div>
-              <p class="mt-2 text-center text-xs text-white/40">1 / 2 / 3</p>
-              {#if result.kind === 'answer'}
-                {#if sheetOpen}
-                  <div class="mt-3">
-                    {@render sheetPanel()}
-                  </div>
-                {:else}
-                  <button onclick={toggleSheet} class="mt-3 w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white/80 text-sm font-medium transition-colors">
-                    Learn this answer <span class="opacity-60">(e)</span>
-                  </button>
-                {/if}
-              {/if}
-            {/if}
-            {#if result.examples.length > 0}
-              <div class="mt-4 pt-4 border-t border-white/10 text-sm text-white/80 space-y-2">
-                {#each result.examples as ex}
-                  <p>"{ex.clue}" <span class="text-white/50">({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</span></p>
-                {/each}
-              </div>
-            {/if}
+            </div>
           {/if}
         </div>
       </div>
