@@ -22,6 +22,10 @@ pub struct Progress {
     /// days_left − days needed at trailing pace; positive = ahead. None when
     /// pace is zero.
     pub days_ahead: Option<i64>,
+    /// Labeled hooks this user has seen at least once / labeled hooks on the
+    /// entities they have touched (spec §3, "hook coverage").
+    pub hooks_seen: i64,
+    pub hooks_total: i64,
 }
 
 const TRAILING_WINDOW_DAYS: f64 = 14.0;
@@ -32,6 +36,8 @@ pub fn compute_progress(
     created_last_14d: i64,
     today: NaiveDate,
     target: NaiveDate,
+    hooks_seen: i64,
+    hooks_total: i64,
 ) -> Progress {
     let remaining = (deck_total - touched).max(0);
     let touched_pct = if deck_total > 0 {
@@ -72,6 +78,8 @@ pub fn compute_progress(
         past_target,
         projected_finish,
         days_ahead,
+        hooks_seen,
+        hooks_total,
     }
 }
 
@@ -84,9 +92,15 @@ mod tests {
     }
 
     #[test]
+    fn progress_carries_hook_coverage_through() {
+        let p = compute_progress(100, 10, 14, d(2026, 9, 16), d(2026, 12, 31), 12, 40);
+        assert_eq!((p.hooks_seen, p.hooks_total), (12, 40));
+    }
+
+    #[test]
     fn typical_mid_september_snapshot() {
         // 4,765 deck, 1,097 touched, 154 created in last 14 days (11/day).
-        let p = compute_progress(4765, 1097, 154, d(2026, 9, 15), d(2026, 12, 31));
+        let p = compute_progress(4765, 1097, 154, d(2026, 9, 15), d(2026, 12, 31), 0, 0);
         assert_eq!(p.days_left, 108); // Sept 15 .. Dec 31 inclusive
         assert_eq!(p.required_per_day, 34); // ceil(3668 / 108)
         assert!(!p.past_target);
@@ -99,7 +113,7 @@ mod tests {
 
     #[test]
     fn zero_trailing_pace_has_no_projection() {
-        let p = compute_progress(100, 10, 0, d(2026, 9, 15), d(2026, 12, 31));
+        let p = compute_progress(100, 10, 0, d(2026, 9, 15), d(2026, 12, 31), 0, 0);
         assert_eq!(p.trailing_per_day, 0.0);
         assert_eq!(p.projected_finish, None);
         assert_eq!(p.days_ahead, None);
@@ -108,7 +122,7 @@ mod tests {
 
     #[test]
     fn target_in_the_past_reports_remaining_and_flags() {
-        let p = compute_progress(100, 40, 14, d(2026, 9, 15), d(2026, 9, 1));
+        let p = compute_progress(100, 40, 14, d(2026, 9, 15), d(2026, 9, 1), 0, 0);
         assert_eq!(p.days_left, 0);
         assert!(p.past_target);
         assert_eq!(p.required_per_day, 60);
@@ -116,7 +130,7 @@ mod tests {
 
     #[test]
     fn target_today_counts_today_as_a_day() {
-        let p = compute_progress(100, 40, 14, d(2026, 9, 15), d(2026, 9, 15));
+        let p = compute_progress(100, 40, 14, d(2026, 9, 15), d(2026, 9, 15), 0, 0);
         assert_eq!(p.days_left, 1);
         assert!(!p.past_target);
         assert_eq!(p.required_per_day, 60);
@@ -124,7 +138,7 @@ mod tests {
 
     #[test]
     fn deck_complete_is_finished_today() {
-        let p = compute_progress(100, 100, 0, d(2026, 9, 15), d(2026, 12, 31));
+        let p = compute_progress(100, 100, 0, d(2026, 9, 15), d(2026, 12, 31), 0, 0);
         assert_eq!(p.required_per_day, 0);
         assert!(!p.past_target);
         assert_eq!(p.projected_finish, Some(d(2026, 9, 15)));
@@ -135,7 +149,7 @@ mod tests {
     #[test]
     fn required_per_day_rounds_up() {
         // 10 remaining over 3 days → 4/day, not 3.
-        let p = compute_progress(20, 10, 0, d(2026, 9, 15), d(2026, 9, 17));
+        let p = compute_progress(20, 10, 0, d(2026, 9, 15), d(2026, 9, 17), 0, 0);
         assert_eq!(p.days_left, 3);
         assert_eq!(p.required_per_day, 4);
     }
@@ -143,7 +157,7 @@ mod tests {
     #[test]
     fn touched_above_deck_total_clamps_remaining_to_zero() {
         // Deck regenerated smaller than what was already touched.
-        let p = compute_progress(50, 60, 0, d(2026, 9, 15), d(2026, 12, 31));
+        let p = compute_progress(50, 60, 0, d(2026, 9, 15), d(2026, 12, 31), 0, 0);
         assert_eq!(p.required_per_day, 0);
         assert!((p.touched_pct - 100.0).abs() < 1e-9);
     }

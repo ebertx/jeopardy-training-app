@@ -173,7 +173,7 @@ pub async fn stats(
     .fetch_one(&state.pool)
     .await?;
     let new_today: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
+        "SELECT COUNT(*) FROM pavlov_cards ca
          WHERE ca.user_id = $1 AND ca.created_at >= $2 AND ca.last_review IS NOT NULL",
     )
     .bind(user_id)
@@ -216,7 +216,7 @@ pub async fn stats(
         .await?;
     let deck_json_total = learning + maturing + mastered + struggling + banished;
     let touched: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
+        "SELECT COUNT(*) FROM pavlov_cards ca
          WHERE ca.user_id = $1",
     )
     .bind(user_id)
@@ -288,7 +288,20 @@ pub async fn stats(
     .bind(window_start)
     .fetch_one(&state.pool)
     .await?;
-    let progress = compute_progress(deck_total, touched, created_14d, today, target_date);
+    let (hooks_seen, hooks_total): (i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(DISTINCT pr.hook_id) FROM pavlov_reviews pr
+             JOIN pavlov_hooks h ON h.id = pr.hook_id
+             WHERE pr.user_id = $1 AND h.status = 'active' AND h.cue IS NOT NULL),
+           (SELECT count(*) FROM pavlov_hooks h
+             JOIN pavlov_cards ca ON ca.answer_id = h.answer_id
+             WHERE ca.user_id = $1 AND ca.last_review IS NOT NULL
+               AND h.status = 'active' AND h.cue IS NOT NULL)",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
+    let progress = compute_progress(deck_total, touched, created_14d, today, target_date, hooks_seen, hooks_total);
 
     Ok(Json(json!({
         "overall": pack(all.total, all.correct),

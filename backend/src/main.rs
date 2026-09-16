@@ -127,6 +127,10 @@ async fn run() {
         .route("/api/pavlov/drill/next", get(routes::pavlov::drill_next))
         .route("/api/pavlov/drill/check", post(routes::pavlov::drill_check))
         .route("/api/pavlov/drill/grade", post(routes::pavlov::drill_grade))
+        .route("/api/pavlov/hooks/{id}", get(routes::pavlov::hook_detail))
+        .route("/api/pavlov/hooks/{id}/drop", post(routes::pavlov::hook_drop))
+        .route("/api/pavlov/hooks/{id}/restore", post(routes::pavlov::hook_restore))
+        .route("/api/pavlov/entity/question/{id}", get(routes::pavlov::entity_by_question))
         .route("/api/pavlov/stats", get(routes::pavlov_stats::stats))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("cache-control"),

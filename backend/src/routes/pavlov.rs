@@ -133,6 +133,8 @@ struct AnswerListRow {
     phrase_tiers: Vec<String>,
     score: f32,
     suspended: bool,
+    forms: Vec<String>,
+    vetted: bool,
 }
 
 pub async fn answers(
@@ -141,7 +143,7 @@ pub async fn answers(
 ) -> Result<Json<Value>, AppError> {
     let mut rows: Vec<AnswerListRow> = sqlx::query_as(
         "SELECT pa.id, pa.answer, pa.answer_norm, pa.meta_category, pa.phrases,
-                pa.phrase_tiers, pa.score,
+                pa.phrase_tiers, pa.score, pa.forms, pa.vetted,
                 COALESCE(ca.suspended, false) AS suspended
          FROM pavlov_answers pa
          LEFT JOIN pavlov_cards ca ON ca.answer_id = pa.id AND ca.user_id = $1",
@@ -168,6 +170,21 @@ pub async fn answers(
         ev_map.insert((norm, display), (tier, support, total, prec));
     }
 
+    #[derive(sqlx::FromRow)]
+    struct HookListRow { id: i32, answer_id: i32, rank: i32, cue: Option<String>, key_gram: String, support: i32, source: String, status: String }
+    let hook_rows: Vec<HookListRow> = sqlx::query_as(
+        "SELECT id, answer_id, rank, cue, key_gram, support, source, status FROM pavlov_hooks ORDER BY answer_id, rank, id",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut hooks_by_answer: HashMap<i32, Vec<Value>> = HashMap::new();
+    for h in hook_rows {
+        hooks_by_answer.entry(h.answer_id).or_default().push(json!({
+            "id": h.id, "rank": h.rank, "cue": h.cue, "keyGram": h.key_gram,
+            "support": h.support, "source": h.source, "status": h.status,
+        }));
+    }
+
     let answers: Vec<Value> = rows
         .into_iter()
         .map(|r| {
@@ -189,6 +206,8 @@ pub async fn answers(
             json!({
                 "id": r.id, "answer": r.answer, "category": r.meta_category,
                 "phrases": phrases, "suspended": r.suspended,
+                "forms": r.forms, "vetted": r.vetted,
+                "hooks": hooks_by_answer.remove(&r.id).unwrap_or_default(),
             })
         })
         .collect();
@@ -224,6 +243,70 @@ pub async fn suspend(
     .execute(&state.pool)
     .await?;
     Ok(Json(json!({ "suspended": body.suspended })))
+}
+
+async fn set_hook_status(state: &Arc<AppState>, id: i32, status: &str) -> Result<Json<Value>, AppError> {
+    let n = sqlx::query("UPDATE pavlov_hooks SET status = $2 WHERE id = $1")
+        .bind(id)
+        .bind(status)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(AppError::NotFound("No such hook".into()));
+    }
+    Ok(Json(json!({ "status": status })))
+}
+
+pub async fn hook_drop(State(state): State<Arc<AppState>>, _auth: AuthUser, Path(id): Path<i32>) -> Result<Json<Value>, AppError> {
+    set_hook_status(&state, id, "dropped").await
+}
+
+pub async fn hook_restore(State(state): State<Arc<AppState>>, _auth: AuthUser, Path(id): Path<i32>) -> Result<Json<Value>, AppError> {
+    set_hook_status(&state, id, "active").await
+}
+
+/// Up to three example clues for one hook (list page expansion).
+pub async fn hook_detail(State(state): State<Arc<AppState>>, _auth: AuthUser, Path(id): Path<i32>) -> Result<Json<Value>, AppError> {
+    let row: Option<(Option<String>, String, Vec<String>, Vec<i32>)> =
+        sqlx::query_as("SELECT cue, key_gram, grams, clue_ids FROM pavlov_hooks WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
+    let (cue, key_gram, grams, clue_ids) = row.ok_or_else(|| AppError::NotFound("No such hook".into()))?;
+    let examples: Vec<(String, Option<String>, Option<chrono::NaiveDate>)> = sqlx::query_as(
+        "SELECT coalesce(answer, ''), category, air_date FROM jeopardy_questions
+         WHERE id = ANY($1) ORDER BY air_date DESC NULLS LAST LIMIT 3",
+    )
+    .bind(&clue_ids)
+    .fetch_all(&state.pool)
+    .await?;
+    let examples: Vec<Value> = examples
+        .into_iter()
+        .map(|(clue, category, air_date)| json!({ "clue": clue, "category": category, "airDate": air_date }))
+        .collect();
+    Ok(Json(json!({ "id": id, "cue": cue, "keyGram": key_gram, "grams": grams, "examples": examples })))
+}
+
+/// The hook map for the deck entity a clue resolves to (practice pause).
+pub async fn entity_by_question(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(question_id): Path<i32>,
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+    let answer_id: Option<i32> = sqlx::query_scalar(
+        "SELECT pa.id FROM jeopardy_questions jq JOIN pavlov_answers pa ON pa.answer_norm = jq.entity_norm
+         WHERE jq.id = $1",
+    )
+    .bind(question_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some(answer_id) = answer_id else {
+        return Ok(axum::http::StatusCode::NO_CONTENT.into_response());
+    };
+    let (answer, forms, hooks) = hook_map(&state, auth.user_id, answer_id).await?;
+    Ok(Json(json!({ "answerId": answer_id, "answer": answer, "forms": forms, "hooks": hooks })).into_response())
 }
 
 use crate::hooks::{cap_for_coverage, pick_hook, HookExposure};
