@@ -36,7 +36,7 @@ pub fn phrase_leaks_answer(answer: &str, phrase: &str) -> bool {
 /// character (so "sun-tzu" and "sun tzu" both yield {"sun", "tzu"}), empties
 /// filtered. Used to relate spelling variants (hyphen/space/apostrophe) during
 /// redundancy pruning.
-fn norm_tokens(s: &str) -> std::collections::HashSet<String> {
+pub(crate) fn norm_tokens(s: &str) -> std::collections::HashSet<String> {
     s.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())

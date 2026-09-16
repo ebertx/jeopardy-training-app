@@ -5,6 +5,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde_json::Value;
+
+use crate::pavlov::{phrase_leaks_answer, trim_scaffolding};
+
 pub const HOOK_MIN_SUPPORT: i64 = 2;
 pub const HOOK_MAX_PER_ENTITY: usize = 8;
 pub const HOOK_UNIGRAM_MAX_DF: i64 = 3000;
@@ -167,6 +171,180 @@ pub fn cluster_hooks(grams: &[GramStat], corpus_clues: i64) -> Vec<Cluster> {
     out
 }
 
+// ---------------------------------------------------------------- drill helpers (spec §3)
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HookExposure {
+    pub id: i32,
+    pub rank: i32,
+    pub seen: i64,
+    pub last_wrong: bool,
+}
+
+/// Fewest exposures → last rating wrong → rank → id.
+pub fn pick_hook(hooks: &[HookExposure]) -> Option<i32> {
+    hooks
+        .iter()
+        .min_by(|a, b| {
+            a.seen
+                .cmp(&b.seen)
+                .then(b.last_wrong.cmp(&a.last_wrong)) // true (wrong) sorts first
+                .then(a.rank.cmp(&b.rank))
+                .then(a.id.cmp(&b.id))
+        })
+        .map(|h| h.id)
+}
+
+pub const HOOK_COVERAGE_CAP_DAYS: f64 = 7.0;
+const DAY_SECS: i64 = 86_400;
+
+/// While the entity still has a labeled hook this user has never seen, no
+/// rating may schedule it further out than HOOK_COVERAGE_CAP_DAYS.
+pub fn cap_for_coverage(interval_days: f64, interval_secs: i64, has_unseen: bool) -> (f64, i64) {
+    if has_unseen && interval_days > HOOK_COVERAGE_CAP_DAYS {
+        (HOOK_COVERAGE_CAP_DAYS, HOOK_COVERAGE_CAP_DAYS as i64 * DAY_SECS)
+    } else {
+        (interval_days, interval_secs)
+    }
+}
+
+// ---------------------------------------------------------------- vetted import (spec §2)
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VettedPair {
+    pub cue: String,
+    pub response: String,
+}
+
+/// `cue\tresponse\tdomain\tsource_url` rows; header and malformed lines skipped.
+pub fn parse_vetted_tsv(s: &str) -> Vec<VettedPair> {
+    s.lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut it = line.split('\t');
+            let cue = it.next()?.trim();
+            let response = it.next()?.trim();
+            if cue.is_empty() || response.is_empty() {
+                return None;
+            }
+            Some(VettedPair { cue: cue.to_string(), response: response.to_string() })
+        })
+        .collect()
+}
+
+/// A vetted cue (as Postgres `english` lexemes) labels a cluster when every
+/// token of at least one cluster gram is among the lexemes.
+pub fn vetted_matches(cue_lexemes: &[String], grams: &[String]) -> bool {
+    grams.iter().any(|g| {
+        let toks: Vec<&str> = g.split_whitespace().collect();
+        !toks.is_empty() && toks.iter().all(|t| cue_lexemes.iter().any(|l| l == t))
+    })
+}
+
+// ---------------------------------------------------------------- model labels (spec §2)
+
+pub const HOOK_LABEL_MODEL: &str = "gpt-4o-mini";
+pub const HOOK_LABEL_BATCH: i64 = 20;
+const HEDGES: &[&str] = &["possibly", "perhaps", "often", "maybe", "sometimes"];
+const MAX_LABEL_WORDS: usize = 8;
+
+#[derive(Debug, Clone)]
+pub struct HookLabelInput {
+    pub answer: String,
+    pub key_gram: String,
+    pub grams: Vec<String>,
+    pub sample_clues: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HookLabelOutcome {
+    pub answer: String,
+    pub key_gram: String,
+    pub cue: Option<String>,
+}
+
+pub fn hook_label_prompts(batch: &[HookLabelInput]) -> (String, String) {
+    let system = "You write short Jeopardy! cue labels. For each item you get an answer, the stemmed key \
+terms of ONE angle the clue writers use for that answer, and real clues from that angle. Return a cue \
+of 2 to 8 words naming that angle the way a Jeopardy! clue would, built only from words that appear \
+in the supplied clues (names, dates, places, works). NEVER include the answer or any word of the \
+answer. No hedges (possibly, perhaps, often). No leading 'this' or 'these'. Set keep=false when the \
+clues do not share a real angle. Respond with JSON only: {\"results\": [{\"answer\": string (echoed \
+verbatim), \"key_gram\": string (echoed verbatim), \"keep\": boolean, \"cue\": string}]}"
+        .to_string();
+    let items: Vec<Value> = batch
+        .iter()
+        .map(|b| {
+            serde_json::json!({
+                "answer": b.answer,
+                "key_gram": b.key_gram,
+                "terms": b.grams,
+                "clues": b.sample_clues,
+            })
+        })
+        .collect();
+    let user = serde_json::to_string_pretty(&serde_json::json!({ "hooks": items })).expect("serializable");
+    (system, user)
+}
+
+fn tokens(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect()
+}
+
+/// Every content token (≥ 4 chars) of `cue` appears as a token of some clue.
+pub fn label_grounded(cue: &str, clues: &[String]) -> bool {
+    let cue_toks = tokens(cue);
+    if cue_toks.is_empty() {
+        return false;
+    }
+    let clue_toks: std::collections::HashSet<String> = clues.iter().flat_map(|c| tokens(c)).collect();
+    cue_toks.iter().filter(|t| t.len() >= 4).all(|t| clue_toks.contains(t))
+}
+
+/// Lenient parse; every gate from the spec applied. Items with no matching
+/// input are skipped; an item that fails a gate yields `cue: None`.
+pub fn parse_hook_labels(v: &Value, inputs: &[HookLabelInput]) -> Vec<HookLabelOutcome> {
+    let Some(results) = v.get("results").and_then(|r| r.as_array()) else {
+        return vec![];
+    };
+    results
+        .iter()
+        .filter_map(|item| {
+            let answer = item.get("answer")?.as_str()?.trim().to_string();
+            let key_gram = item.get("key_gram")?.as_str()?.trim().to_string();
+            let input = inputs
+                .iter()
+                .find(|i| i.answer.eq_ignore_ascii_case(&answer) && i.key_gram == key_gram)?;
+            let raw = item
+                .get("cue")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .trim()
+                .trim_matches(['"', '\'', '\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}'])
+                .to_string();
+            let cue = trim_scaffolding(&raw);
+            let keep = item.get("keep").and_then(|k| k.as_bool()).unwrap_or(true);
+            let words = cue.split_whitespace().count();
+            let hedged = tokens(&cue).iter().any(|t| HEDGES.contains(&t.as_str()));
+            let ok = keep
+                && !cue.is_empty()
+                && words <= MAX_LABEL_WORDS
+                && !phrase_leaks_answer(&input.answer, &cue)
+                && label_grounded(&cue, &input.sample_clues)
+                && !hedged;
+            Some(HookLabelOutcome {
+                answer: input.answer.clone(),
+                key_gram,
+                cue: ok.then_some(cue),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +469,108 @@ mod tests {
     #[test]
     fn empty_input_yields_no_hooks() {
         assert!(cluster_hooks(&[], 530_000).is_empty());
+    }
+
+    fn h(id: i32, rank: i32, seen: i64, last_wrong: bool) -> HookExposure {
+        HookExposure { id, rank, seen, last_wrong }
+    }
+
+    #[test]
+    fn pick_hook_prefers_unseen_then_last_wrong_then_rank() {
+        assert_eq!(pick_hook(&[h(1, 1, 3, false), h(2, 2, 0, false), h(3, 3, 0, false)]), Some(2));
+        assert_eq!(pick_hook(&[h(1, 1, 2, false), h(2, 2, 2, true), h(3, 3, 2, false)]), Some(2));
+        assert_eq!(pick_hook(&[h(1, 2, 1, false), h(2, 1, 1, false)]), Some(2));
+        assert_eq!(pick_hook(&[]), None);
+    }
+
+    #[test]
+    fn coverage_cap_only_bites_with_unseen_hooks_and_long_intervals() {
+        assert_eq!(cap_for_coverage(30.0, 30 * 86_400, true), (7.0, 7 * 86_400));
+        assert_eq!(cap_for_coverage(30.0, 30 * 86_400, false), (30.0, 30 * 86_400));
+        assert_eq!(cap_for_coverage(3.0, 3 * 86_400, true), (3.0, 3 * 86_400));
+        assert_eq!(cap_for_coverage(0.0, 600, true), (0.0, 600));
+    }
+
+    fn s(v: &[&str]) -> Vec<String> { v.iter().map(|x| x.to_string()).collect() }
+
+    #[test]
+    fn vetted_matches_when_every_token_of_some_gram_is_a_lexeme() {
+        assert!(vetted_matches(&s(&["finnish", "compos"]), &s(&["finnish compos", "finlandia"])));
+        assert!(vetted_matches(&s(&["lullabi"]), &s(&["lullabi", "requiem"])));
+        assert!(!vetted_matches(&s(&["german", "requiem"]), &s(&["lullabi"])));
+        assert!(!vetted_matches(&s(&["sack"]), &s(&["sack rome"])));
+        assert!(!vetted_matches(&s(&[]), &s(&["x"])));
+    }
+
+    fn input(answer: &str, key: &str, grams: &[&str], clues: &[&str]) -> HookLabelInput {
+        HookLabelInput { answer: answer.into(), key_gram: key.into(), grams: s(grams), sample_clues: s(clues) }
+    }
+
+    #[test]
+    fn label_prompts_carry_answer_grams_and_clues_and_demand_json() {
+        let (system, user) = hook_label_prompts(&[input(
+            "the Visigoths", "711", &["711", "spain"],
+            &["In 711 a Muslim army defeated Roderick, the last king of these people in Spain"],
+        )]);
+        assert!(system.contains("JSON"));
+        assert!(system.to_lowercase().contains("never"));
+        assert!(user.contains("Visigoths"));
+        assert!(user.contains("\"711\""));
+        assert!(user.contains("Roderick"));
+    }
+
+    #[test]
+    fn label_grounded_requires_content_words_to_appear_in_a_clue() {
+        let clues = s(&["In 711 a Muslim army defeated Roderick, the last king of these people in Spain"]);
+        assert!(label_grounded("last king of these people in Spain", &clues));
+        assert!(label_grounded("Roderick's people", &clues));
+        assert!(label_grounded("Spain in 711", &clues)); // "711" is short: not checked
+        assert!(!label_grounded("kings of Toledo", &clues));
+        assert!(!label_grounded("ruled Spain until 711", &clues)); // "ruled"/"until" absent
+        assert!(!label_grounded("", &clues));
+    }
+
+    #[test]
+    fn parse_labels_applies_every_gate() {
+        let inputs = vec![
+            input("the Visigoths", "711", &["711", "spain"], &["These western Goths (as opposed to the eastern Ostrogoths) ruled Spain until 711"]),
+            input("the Visigoths", "alar", &["alar", "sack rome"], &["410 A.D.: Under Alaric, these \"Westerners\" sack Rome"]),
+            input("Brahms", "lullabi", &["lullabi"], &["This composer of a famous Lullaby"]),
+            input("Solomon", "wise", &["wise"], &["This wise king judged between two mothers"]),
+            input("Solomon", "templ", &["templ"], &["He built the first temple in Jerusalem"]),
+            input("Solomon", "mother", &["mother"], &["This wise king judged between two mothers"]),
+        ];
+        let v = serde_json::json!({ "results": [
+            { "answer": "the Visigoths", "key_gram": "711", "keep": true, "cue": "\"ruled Spain until 711\"" },
+            { "answer": "the Visigoths", "key_gram": "alar", "keep": true, "cue": "the Visigoths' Alaric sacks Rome" },  // leaks the answer
+            { "answer": "Brahms", "key_gram": "lullabi", "keep": true, "cue": "Lullaby composer of Hamburg" },          // Hamburg not in a clue
+            { "answer": "Solomon", "key_gram": "wise", "keep": false, "cue": "wise king" },                              // keep=false
+            { "answer": "Solomon", "key_gram": "templ", "keep": true, "cue": "possibly built the first temple" },        // hedge
+            { "answer": "Solomon", "key_gram": "mother", "keep": true, "cue": "this wise king who judged between two mothers and more" }, // > 8 words after trim
+            { "answer": "Nobody", "key_gram": "x", "keep": true, "cue": "orphan" },                                      // no input: skipped
+        ]});
+        let out = parse_hook_labels(&v, &inputs);
+        assert_eq!(out.len(), 6);
+        assert_eq!(out[0].cue.as_deref(), Some("ruled Spain until 711"));
+        assert!(out[1].cue.is_none(), "answer leak");
+        assert!(out[2].cue.is_none(), "ungrounded word");
+        assert!(out[3].cue.is_none(), "keep=false");
+        assert!(out[4].cue.is_none(), "hedge");
+        assert!(out[5].cue.is_none(), "too long");
+    }
+
+    #[test]
+    fn parse_labels_of_garbage_is_empty() {
+        assert!(parse_hook_labels(&serde_json::json!({"nope": 1}), &[]).is_empty());
+    }
+
+    #[test]
+    fn vetted_tsv_parses_rows_and_skips_header_and_blanks() {
+        let tsv = "cue\tresponse\tdomain\tsource_url\nFINLAND\tjean \"finlandia\" sibelius\trussian\thttps://x\n\nbad line\n\"lullaby\"\tjohannes brahms\tgerman\thttps://x\n";
+        let rows = parse_vetted_tsv(tsv);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].cue, "FINLAND");
+        assert_eq!(rows[0].response, "jean \"finlandia\" sibelius");
+        assert_eq!(rows[1].response, "johannes brahms");
     }
 }
