@@ -214,7 +214,15 @@ pub async fn stats(
         .bind(user_id)
         .fetch_one(&state.pool)
         .await?;
-    let touched = learning + maturing + mastered + struggling + banished;
+    let deck_json_total = learning + maturing + mastered + struggling + banished;
+    // Deck coverage counts real answers only; fact cards are depth, not progress.
+    let touched: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pavlov_cards ca JOIN pavlov_answers pa ON pa.id = ca.answer_id
+         WHERE ca.user_id = $1 AND pa.kind = 'answer'",
+    )
+    .bind(user_id)
+    .fetch_one(&state.pool)
+    .await?;
 
     // Keep in sync with routes/practice.rs (same upsert + baseline rule).
     // Snapshot today (user-local date) and diff against a baseline: newest
@@ -269,7 +277,7 @@ pub async fn stats(
     });
 
     // --- progress toward the target date ------------------------------------
-    let deck_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pavlov_answers")
+    let deck_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pavlov_answers WHERE kind = 'answer'")
         .fetch_one(&state.pool)
         .await?;
     let window_start = day_start - Duration::days(13); // today + 13 prior local days
@@ -300,7 +308,7 @@ pub async fn stats(
             "mastered": mastered,
             "struggling": struggling,
             "banished": banished,
-            "total": touched,
+            "total": deck_json_total,
             "delta": delta,
         },
         "progress": progress,

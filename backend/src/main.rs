@@ -127,6 +127,7 @@ async fn run() {
         .route("/api/pavlov/drill/next", get(routes::pavlov::drill_next))
         .route("/api/pavlov/drill/check", post(routes::pavlov::drill_check))
         .route("/api/pavlov/drill/grade", post(routes::pavlov::drill_grade))
+        .route("/api/pavlov/facts", post(routes::pavlov_facts::add_facts))
         .route("/api/pavlov/stats", get(routes::pavlov_stats::stats))
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("cache-control"),

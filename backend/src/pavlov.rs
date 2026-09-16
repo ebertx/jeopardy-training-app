@@ -686,7 +686,7 @@ async fn assemble_stage(state: &Arc<AppState>) -> Result<(), AppError> {
     // of its standard cues were re-rendered as dropped since the last run).
     // pavlov_cards rows cascade off pavlov_answers.
     sqlx::query(
-        "DELETE FROM pavlov_answers WHERE answer_norm NOT IN
+        "DELETE FROM pavlov_answers WHERE kind = 'answer' AND answer_norm NOT IN
            (SELECT DISTINCT answer_norm FROM pavlov_cues
             WHERE status = 'active' AND tier = 'standard')",
     )
