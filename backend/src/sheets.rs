@@ -115,10 +115,15 @@ pub fn parse_sheet(v: &Value, answer_norm: &str) -> Result<SheetContent, String>
 }
 
 /// Pick `n` items spread evenly across a chronologically ordered slice, always
-/// keeping the first and last. Returns everything when the slice has ≤ n items.
+/// keeping the first and last. Returns everything when the slice has ≤ n items
+/// (this also covers `n == 0`, which returns everything). `n == 1` returns just
+/// the first item.
 pub fn sample_evenly<T: Clone>(items: &[T], n: usize) -> Vec<T> {
     if items.len() <= n || n == 0 {
         return items.to_vec();
+    }
+    if n == 1 {
+        return vec![items[0].clone()];
     }
     let last = items.len() - 1;
     (0..n)
@@ -228,6 +233,12 @@ mod tests {
         assert_eq!(*s.last().unwrap(), 29);
         assert_eq!(sample_evenly(&v, 100).len(), 30); // fewer than n → all
         assert!(sample_evenly(&Vec::<i32>::new(), 5).is_empty());
+    }
+
+    #[test]
+    fn sample_evenly_n_one_does_not_divide_by_zero() {
+        let v: Vec<i32> = (0..30).collect();
+        assert_eq!(sample_evenly(&v, 1), vec![0]);
     }
 
     #[test]
