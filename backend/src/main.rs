@@ -7,6 +7,7 @@ mod error;
 mod models;
 mod srs;
 mod adaptive;
+mod activity;
 mod blend;
 mod pavlov;
 mod pavlov_stats;
@@ -89,6 +90,7 @@ async fn run() {
         .route("/api/drill/next", get(routes::drill::next))
         .route("/api/mastery/reset", post(routes::mastery::reset))
         .route("/api/stats", get(routes::stats::stats))
+        .route("/api/activity", get(routes::activity::activity))
         .route("/api/categories", get(routes::categories::list))
         .route("/api/preferences", get(routes::preferences::get).put(routes::preferences::update))
         .route("/api/questions/{id}", get(routes::questions::get_question))
