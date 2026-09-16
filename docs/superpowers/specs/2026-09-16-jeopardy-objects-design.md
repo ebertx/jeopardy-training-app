@@ -145,6 +145,11 @@ Input: the entity's clues (via `entity_norm`) and their grams in
   in it carry the most inverse-document-frequency weight
   (`ln(corpus_clues / df)`), ties to the larger cluster — so common-but-
   relevant grams contribute less than rare ones without being dropped.
+- **Seed cap:** only the `HOOK_MAX_SEEDS = 60` seed grams with the highest
+  support × idf take part in clustering (amended during execution: the
+  pairwise merge loop is quadratic in seeds, and a 500-clue entity can have
+  over a thousand recurring grams; hooks are capped at 8, so the top 60 by
+  weight carry every angle that could rank).
 - **Clustering:** each seed gram starts a cluster with its clue set. Two
   clusters merge when Jaccard(clue sets) ≥ 0.5 or one set contains the
   other. Then every clue is assigned to the cluster whose grams it matches
