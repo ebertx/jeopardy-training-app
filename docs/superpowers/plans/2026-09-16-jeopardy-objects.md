@@ -406,8 +406,10 @@ pub fn strip_parens(s: &str) -> String {
 pub fn strip_honorific(s: &str) -> String {
     let t = s.trim();
     for h in ["sir ", "dame "] {
-        if t.len() > h.len() && t[..h.len()].eq_ignore_ascii_case(h) {
-            return t[h.len()..].trim().to_string();
+        if let Some(prefix) = t.get(..h.len()) {
+            if t.len() > h.len() && prefix.eq_ignore_ascii_case(h) {
+                return t[h.len()..].trim().to_string();
+            }
         }
     }
     t.to_string()
@@ -916,16 +918,18 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
     #[test]
     fn label_grounded_requires_content_words_to_appear_in_a_clue() {
         let clues = s(&["In 711 a Muslim army defeated Roderick, the last king of these people in Spain"]);
-        assert!(label_grounded("ruled Spain until 711", &clues));
+        assert!(label_grounded("last king of these people in Spain", &clues));
         assert!(label_grounded("Roderick's people", &clues));
+        assert!(label_grounded("Spain in 711", &clues)); // "711" is short: not checked
         assert!(!label_grounded("kings of Toledo", &clues));
+        assert!(!label_grounded("ruled Spain until 711", &clues)); // "ruled"/"until" absent
         assert!(!label_grounded("", &clues));
     }
 
     #[test]
     fn parse_labels_applies_every_gate() {
         let inputs = vec![
-            input("the Visigoths", "711", &["711", "spain"], &["In 711 a Muslim army defeated Roderick, the last king of these people in Spain"]),
+            input("the Visigoths", "711", &["711", "spain"], &["These western Goths (as opposed to the eastern Ostrogoths) ruled Spain until 711"]),
             input("the Visigoths", "alar", &["alar", "sack rome"], &["410 A.D.: Under Alaric, these \"Westerners\" sack Rome"]),
             input("Brahms", "lullabi", &["lullabi"], &["This composer of a famous Lullaby"]),
             input("Solomon", "wise", &["wise"], &["This wise king judged between two mothers"]),
@@ -934,7 +938,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
         ];
         let v = serde_json::json!({ "results": [
             { "answer": "the Visigoths", "key_gram": "711", "keep": true, "cue": "\"ruled Spain until 711\"" },
-            { "answer": "the Visigoths", "key_gram": "alar", "keep": true, "cue": "Visigoth king Alaric sacks Rome" },   // leaks the answer
+            { "answer": "the Visigoths", "key_gram": "alar", "keep": true, "cue": "the Visigoths' Alaric sacks Rome" },  // leaks the answer
             { "answer": "Brahms", "key_gram": "lullabi", "keep": true, "cue": "Lullaby composer of Hamburg" },          // Hamburg not in a clue
             { "answer": "Solomon", "key_gram": "wise", "keep": false, "cue": "wise king" },                              // keep=false
             { "answer": "Solomon", "key_gram": "templ", "keep": true, "cue": "possibly built the first temple" },        // hedge
