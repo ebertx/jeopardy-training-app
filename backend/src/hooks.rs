@@ -388,6 +388,27 @@ pub fn label_grounded(cue: &str, clues: &[String]) -> bool {
     cue_toks.iter().filter(|t| t.chars().count() >= 4).all(|t| clue_toks.contains(t))
 }
 
+/// Strip quotes only when they wrap the whole cue (`"ruled Spain until 711"`);
+/// a cue that merely contains a quoted title (`"Emma" author`) keeps both
+/// marks. Trimming each end independently left `Sense and Sensibility" author`.
+pub fn unwrap_quotes(raw: &str) -> String {
+    const PAIRS: [(char, char); 4] = [('"', '"'), ('\u{201C}', '\u{201D}'), ('\'', '\''), ('\u{2018}', '\u{2019}')];
+    let mut s = raw.trim();
+    loop {
+        let (Some(first), Some(last)) = (s.chars().next(), s.chars().last()) else { break };
+        if s.chars().count() < 2 || !PAIRS.contains(&(first, last)) {
+            break;
+        }
+        let inner = &s[first.len_utf8()..s.len() - last.len_utf8()];
+        // `"Emma" author of "Persuasion"` starts and ends with quotes but is not wrapped.
+        if inner.contains(last) {
+            break;
+        }
+        s = inner.trim();
+    }
+    s.to_string()
+}
+
 /// Lenient parse; every gate from the spec applied (length, answer leak,
 /// grounding in the sample clues or the draft, hedges). Items with no
 /// matching input are skipped; an item that fails a gate yields `cue: None`.
@@ -403,14 +424,8 @@ pub fn parse_hook_labels(v: &Value, inputs: &[HookLabelInput]) -> Vec<HookLabelO
             let input = inputs
                 .iter()
                 .find(|i| i.answer.eq_ignore_ascii_case(&answer) && i.key_gram == key_gram)?;
-            let raw = item
-                .get("cue")
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .trim()
-                .trim_matches(['"', '\'', '\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}'])
-                .to_string();
-            let cue = trim_scaffolding(&raw);
+            let raw = item.get("cue").and_then(|c| c.as_str()).unwrap_or("").trim();
+            let cue = trim_scaffolding(&unwrap_quotes(raw));
             let words = cue.split_whitespace().count();
             let hedged = norm_tokens(&cue).iter().any(|t| HEDGES.contains(&t.as_str()));
             let mut grounding = input.sample_clues.clone();
@@ -787,6 +802,18 @@ mod tests {
             { "answer": "Jane Austen", "key_gram": "sens", "cue": "Sense & Sensibility, Marianne Dashwood" },
         ]});
         assert_eq!(parse_hook_labels(&v, &[i]).remove(0).cue.as_deref(), Some("Sense & Sensibility, Marianne Dashwood"));
+    }
+
+    #[test]
+    fn unwrap_quotes_only_strips_wrapping_quotes() {
+        assert_eq!(unwrap_quotes("\"ruled Spain until 711\""), "ruled Spain until 711");
+        assert_eq!(unwrap_quotes("\u{201C}swan of Avon\u{201D}"), "swan of Avon");
+        assert_eq!(unwrap_quotes("\"Sense and Sensibility\" author"), "\"Sense and Sensibility\" author");
+        assert_eq!(unwrap_quotes("author of \"Emma\""), "author of \"Emma\"");
+        assert_eq!(unwrap_quotes("\"Emma\" author of \"Persuasion\""), "\"Emma\" author of \"Persuasion\"");
+        assert_eq!(unwrap_quotes("Josephine's marriage"), "Josephine's marriage");
+        assert_eq!(unwrap_quotes("\"\""), "");
+        assert_eq!(unwrap_quotes(""), "");
     }
 
     #[test]
