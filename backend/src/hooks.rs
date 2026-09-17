@@ -320,6 +320,64 @@ or 'these'. Respond with JSON only: {\"results\": [{\"answer\": string (echoed v
     (system, user)
 }
 
+/// Leading tokens that mark a phrase clipped mid-sentence.
+const FRAGMENT_LEADING: &[&str] = &[
+    "of", "in", "on", "at", "to", "for", "and", "&", "as", "who", "whom", "whose", "which", "that", "by",
+    "with", "from", "his", "her", "its", "their", "he", "she", "it", "they", "is", "was", "were", "said",
+    "says", "wrote", "than", "but", "or", "nor", "so", "while", "when", "where", "after", "before", "until",
+    "till", "if", "because", "though", "although",
+];
+/// Trailing tokens that leave a phrase hanging.
+const FRAGMENT_TRAILING: &[&str] = &[
+    "of", "in", "on", "at", "to", "for", "and", "&", "as", "who", "whom", "whose", "which", "that", "by",
+    "with", "from", "his", "her", "its", "their", "he", "she", "it", "they", "is", "was", "were", "are",
+    "be", "been", "has", "had", "have", "than", "but", "or", "nor", "so", "the", "a", "an", "this", "these",
+    "those", "not", "into", "onto", "over", "under", "when", "where", "while", "until", "till", "then", "if",
+    "because", "though", "although", "said", "says", "wrote", "called", "named", "made", "put", "gave", "got",
+    "took", "went", "came", "became", "could", "would", "should", "can", "will", "may", "might", "must",
+];
+
+/// A cue-source label is a phrase clipped out of one clue; this says whether
+/// the clip landed mid-sentence: a dangling leading or trailing connective,
+/// a trailing comma / semicolon / colon, or a trailing possessive
+/// ("this author's"). Only such labels are worth a model tidy — sending a
+/// clean cue ("French Emperor") invites the model to make it worse.
+pub fn is_fragment_cue(cue: &str) -> bool {
+    let words: Vec<&str> = cue.split_whitespace().collect();
+    let (Some(first), Some(last)) = (words.first(), words.last()) else {
+        return false;
+    };
+    let strip = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '&').to_lowercase();
+    let first = strip(first);
+    let last_raw = *last;
+    let last = strip(last_raw);
+    FRAGMENT_LEADING.contains(&first.as_str())
+        || FRAGMENT_TRAILING.contains(&last.as_str())
+        || last_raw.ends_with([',', ';', ':'])
+        || last_raw.ends_with("'s")
+        || last_raw.ends_with("\u{2019}s")
+        || last_raw.ends_with("s'")
+}
+
+/// The tidy pass: same gates, a prompt that says what a draft is and shows
+/// what to do with it. gpt-4o-mini left most fragments untouched under the
+/// generic label prompt.
+pub fn hook_tidy_prompts(batch: &[HookLabelInput]) -> (String, String) {
+    let system = "You clean up Jeopardy! cue labels. Each item has an answer, real clues about ONE angle of \
+that answer, and a draft cue that was clipped mechanically out of one clue, so it usually begins or ends \
+mid-sentence: a dangling 'of', 'who', 'in', 'she wrote', 'this author's', a trailing comma, a leading 'In \
+1450 Johann Fust'. Rewrite each draft as a self-contained noun phrase of 2 to 8 words that names the \
+angle, e.g. draft 'of \"Sense & Sensibility\" who' → '\"Sense & Sensibility\" novel'; draft 'In 1450 Johann \
+Fust loaned' → 'Johann Fust's 1450 loan'; draft 'shot by Valerie Solanas,' → 'shot by Valerie Solanas'. Use \
+only words that appear in the draft or the clues. Keep names, titles and quotation marks. If the draft is \
+already a complete phrase, return it exactly. NEVER include the answer or any word of the answer. No \
+leading 'this' or 'these'. Respond with JSON only: {\"results\": [{\"answer\": string (echoed verbatim), \
+\"key_gram\": string (echoed verbatim), \"cue\": string}]}"
+        .to_string();
+    let (_, user) = hook_label_prompts(batch);
+    (system, user)
+}
+
 /// Every content token (≥ 4 chars) of `cue` appears as a token of some clue.
 pub fn label_grounded(cue: &str, clues: &[String]) -> bool {
     let cue_toks = norm_tokens(cue);
@@ -684,6 +742,36 @@ mod tests {
         assert_eq!(out[3].cue.as_deref(), Some("wise king"), "a stray keep=false no longer discards a good cue");
         assert!(out[4].cue.is_none(), "hedge");
         assert!(out[5].cue.is_none(), "too long");
+    }
+
+    #[test]
+    fn fragment_cues_are_the_ones_clipped_mid_sentence() {
+        for f in [
+            "of \"Sense & Sensibility\" who", "in \"Northanger Abbey\" she wrote", "visits Mansfield Park, &",
+            "A Moveable Feast calls Fitzgerald's", "introduced Nick Adams, this author's", "shot by Valerie Solanas,",
+            "Bernard Marx works at", "In 1450 Johann Fust loaned", "On July 30, 1975 he",
+            "as Duke Mantee", "Iowa capital is a", "Stheno, Euryale & her",
+        ] {
+            assert!(is_fragment_cue(f), "{f}");
+        }
+        for c in [
+            "French Emperor", "Norwegian composer", "lightest metal", "Peer Gynt Suite composer", "first Treasury Secretary",
+            "member of the deer family", "Harry Anderson played Judge", "Battle of San Juan Hill", "1928 Ravel work",
+            "\"Pride & Prejudice\" author", "Then known as Upper Peru", "",
+        ] {
+            assert!(!is_fragment_cue(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn tidy_prompt_explains_the_draft_and_carries_the_same_items() {
+        let mut i = input("Jane Austen", "sens", &["sens"], &["Marianne Dashwood is a heroine of this 1811 novel"]);
+        i.hint = Some("of \"Sense & Sensibility\" who".into());
+        let (system, user) = hook_tidy_prompts(&[i.clone()]);
+        assert!(system.contains("draft"));
+        assert!(system.contains("Johann Fust"));
+        assert!(!system.contains("keep"));
+        assert_eq!(user, hook_label_prompts(&[i]).1);
     }
 
     #[test]

@@ -8,9 +8,9 @@ use std::sync::Arc;
 use crate::entity::{self, Entity, Form};
 use crate::error::AppError;
 use crate::hooks::{
-    cluster_hooks, duplicate_hook_pairs, hook_label_prompts, parse_hook_labels, parse_vetted_tsv, vetted_matches,
-    GramStat, HookCue, HookLabelInput, FRAME_GRAMS, HOOK_LABEL_BATCH, HOOK_LABEL_MODEL, HOOK_LABEL_PARALLEL,
-    HOOK_MIN_SUPPORT,
+    cluster_hooks, duplicate_hook_pairs, hook_label_prompts, hook_tidy_prompts, is_fragment_cue, parse_hook_labels,
+    parse_vetted_tsv, vetted_matches, GramStat, HookCue, HookLabelInput, FRAME_GRAMS, HOOK_LABEL_BATCH,
+    HOOK_LABEL_MODEL, HOOK_LABEL_PARALLEL, HOOK_MIN_SUPPORT,
 };
 use crate::AppState;
 
@@ -404,9 +404,35 @@ async fn mine_hooks(state: &Arc<AppState>, corpus_clues: i64) -> Result<(), AppE
                 .collect();
             let clusters = cluster_hooks(&grams, corpus_clues);
 
+            // A labeled hook that already holds (nearly) all of a cluster's
+            // clues is a merge survivor from `merge_duplicate_hooks`: the
+            // cluster is the angle it absorbed. Re-inserting it would relabel
+            // and re-merge it every regeneration, so fold it in instead.
+            let labeled: Vec<(i32, String, Vec<i32>)> = sqlx::query_as(
+                "SELECT id, key_gram, clue_ids FROM pavlov_hooks
+                 WHERE answer_id = $1 AND status = 'active' AND cue IS NOT NULL",
+            )
+            .bind(answer_id)
+            .fetch_all(&state.pool)
+            .await?;
+            let covering = |c: &crate::hooks::Cluster| -> Option<i32> {
+                labeled.iter().find_map(|(id, key, clues)| {
+                    if *key == c.key_gram {
+                        return None;
+                    }
+                    let inside = c.clue_ids.iter().filter(|x| clues.contains(x)).count();
+                    (inside * 5 >= c.clue_ids.len() * 4).then_some(*id)
+                })
+            };
+
             let mut tx = state.pool.begin().await?;
             let mut keys: Vec<String> = Vec::with_capacity(clusters.len());
+            let mut absorb: Vec<(i32, &crate::hooks::Cluster)> = Vec::new();
             for (i, c) in clusters.iter().enumerate() {
+                if let Some(keeper) = covering(c) {
+                    absorb.push((keeper, c));
+                    continue;
+                }
                 sqlx::query(
                     "INSERT INTO pavlov_hooks (answer_id, key_gram, rank, grams, clue_ids, support)
                      VALUES ($1, $2, $3, $4, $5, $6)
@@ -423,6 +449,20 @@ async fn mine_hooks(state: &Arc<AppState>, corpus_clues: i64) -> Result<(), AppE
                 .execute(&mut *tx)
                 .await?;
                 keys.push(c.key_gram.clone());
+            }
+            for (keeper, c) in absorb {
+                sqlx::query(
+                    "UPDATE pavlov_hooks SET
+                       clue_ids = (SELECT COALESCE(array_agg(DISTINCT x ORDER BY x), '{}') FROM unnest(clue_ids || $2::int[]) x),
+                       grams    = (SELECT COALESCE(array_agg(DISTINCT g ORDER BY g), '{}') FROM unnest(grams || $3::text[]) g),
+                       support  = (SELECT count(DISTINCT x) FROM unnest(clue_ids || $2::int[]) x)
+                     WHERE id = $1",
+                )
+                .bind(keeper)
+                .bind(&c.clue_ids)
+                .bind(&c.grams)
+                .execute(&mut *tx)
+                .await?;
             }
             // Mined hooks that no longer come out of clustering and never got a
             // label are noise from a previous run; labeled ones keep their history.
@@ -654,6 +694,11 @@ async fn label_with_model(state: &Arc<AppState>, queue: LabelQueue) -> Result<()
             .bind(&ids)
             .execute(&state.pool)
             .await?;
+        // A clean cue-source label is left alone; only clipped fragments are sent.
+        let claimed: Vec<PendingHook> = match queue {
+            LabelQueue::Fresh => claimed,
+            LabelQueue::Tidy => claimed.into_iter().filter(|b| b.cue.as_deref().is_some_and(is_fragment_cue)).collect(),
+        };
 
         let mut handles = Vec::new();
         for batch in claimed.chunks(HOOK_LABEL_BATCH as usize) {
@@ -681,7 +726,10 @@ async fn label_with_model(state: &Arc<AppState>, queue: LabelQueue) -> Result<()
             let ids: Vec<i32> = batch.iter().map(|b| b.id).collect();
             let key = state.config.openai_api_key.clone();
             handles.push(tokio::spawn(async move {
-                let (system, user) = hook_label_prompts(&inputs);
+                let (system, user) = match queue {
+                    LabelQueue::Fresh => hook_label_prompts(&inputs),
+                    LabelQueue::Tidy => hook_tidy_prompts(&inputs),
+                };
                 let response = crate::openai::chat_json(&key, HOOK_LABEL_MODEL, &system, &user, 0.3).await;
                 (ids, inputs, response)
             }));

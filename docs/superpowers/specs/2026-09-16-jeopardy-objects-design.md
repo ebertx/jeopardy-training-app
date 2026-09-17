@@ -215,7 +215,16 @@ Amended 2026-09-17 after the first live run (label quality review):
   phrase clipped from one clue and often a fragment ("of \"Sense &
   Sensibility\" who"). Each is sent once to the model as a `draft` with the
   same gates, grounding widened to include the draft; a rejected rewrite
-  keeps the draft. `source` stays `cue`, `model` records the tidy.
+  keeps the draft. `source` stays `cue`, `model` records the tidy. Only
+  labels `is_fragment_cue` flags (dangling leading/trailing connective,
+  trailing comma or possessive) are sent, under a tidy-specific prompt with
+  worked examples (`hook_tidy_prompts`); the first pass sent every label
+  under the generic prompt, which left most fragments alone and turned a
+  few clean cues worse ("French Emperor" → "French Emperor III").
+- **Regeneration absorbs merged angles.** When a re-mined cluster's clues
+  are ≥ 80 % inside an existing labeled hook with a different key gram, the
+  cluster is folded into that hook (clues and grams unioned) instead of
+  re-inserted, relabeled and re-merged on every run.
 - **Frame cap.** A cluster keyed by an identity stem — profession,
   nationality, category noun (`FRAME_GRAMS`: poet, compos, english,
   reptil, …) — is the frame, not an angle ("english playwright", "type of
