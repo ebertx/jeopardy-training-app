@@ -203,6 +203,33 @@ A rejected label leaves `cue = NULL`. Unlabeled hooks are not drilled and
 not shown on the map; they are retried on the next hooks run and are visible
 on `/pavlov/list` as "unlabeled" with their key gram.
 
+Amended 2026-09-17 after the first live run (label quality review):
+
+- **No keep flag.** The render prompt asked the model for a `keep` boolean
+  ("false when the clues do not share a real angle"). gpt-4o-mini flipped it
+  for whole batches at a time: 197 of 801 batches came back all-false with
+  good cues attached (Napoleon's Josephine / St. Helena / 1804, Curie's
+  Sorbonne / Sklodowska), stranding a third of all hooks. The flag is gone;
+  the grounding, leak, length and hedge gates are the only gates.
+- **Tidy pass for cue-sourced labels.** A label reused from a v2 cue is a
+  phrase clipped from one clue and often a fragment ("of \"Sense &
+  Sensibility\" who"). Each is sent once to the model as a `draft` with the
+  same gates, grounding widened to include the draft; a rejected rewrite
+  keeps the draft. `source` stays `cue`, `model` records the tidy.
+- **Frame cap.** A cluster keyed by an identity stem — profession,
+  nationality, category noun (`FRAME_GRAMS`: poet, compos, english,
+  reptil, …) — is the frame, not an angle ("english playwright", "type of
+  reptile"). One per entity is kept, by support; the rest are deleted right
+  after mining, before any label is spent.
+- **Duplicate merge.** After labeling, two active labeled hooks of one entity
+  whose cues share a content token (≥ 5 chars, plural folded, frame and
+  connective words excluded — `cue_content_tokens`) are the same angle
+  twice (three cubism hooks on Picasso). The loser folds into the keeper
+  (vetted first, then support): clue ids and grams unioned, reviews
+  re-pointed, row deleted.
+- **Parallel batches.** `HOOK_LABEL_PARALLEL = 4` label batches in flight;
+  each is claimed before its call, so a failure retries on the next run.
+
 ### Vetted import
 
 - Source: the JBoard "Pavlov revival" thread (t=343, 8 pages) plus t=2202
@@ -212,6 +239,15 @@ on `/pavlov/list` as "unlabeled" with their key gram.
   with columns `cue, response, domain, source_url` so the import is
   reproducible. (Raw scrape kept at
   `.playwright-mcp/jboard-pavlovs.md` during implementation; not committed.)
+- Amended 2026-09-17: a list line joins several pavlovs for one response
+  with " & " ("hudson river & hudson bay & killed in mutiny…"); each piece
+  is its own cue (`vetted_cue_pieces`). Pieces that are scrape noise are
+  dropped: all-caps nationality shorthand (NORWAY), unbalanced quotes (a
+  line clipped mid-title), prose over 80 chars. A piece that leaks the
+  answer ("pike's peak" for Zebulon Pike) is skipped. Each hooks run clears
+  the previous run's vetted labels (`both` → unlabeled, stale vetted-only
+  rows deleted) so a re-cut list replaces them; a cluster takes at most one
+  vetted cue per run, later matching pieces become their own hooks.
 - Each response resolves to an entity key with the §1 rules. A matched pair
   either labels a cluster (`both`) or becomes its own hook
   (`source = 'vetted'`, `support` = member clues found by stem search,

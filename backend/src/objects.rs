@@ -8,8 +8,9 @@ use std::sync::Arc;
 use crate::entity::{self, Entity, Form};
 use crate::error::AppError;
 use crate::hooks::{
-    cluster_hooks, hook_label_prompts, parse_hook_labels, parse_vetted_tsv, vetted_matches, GramStat,
-    HookLabelInput, HOOK_LABEL_BATCH, HOOK_LABEL_MODEL, HOOK_MIN_SUPPORT,
+    cluster_hooks, duplicate_hook_pairs, hook_label_prompts, parse_hook_labels, parse_vetted_tsv, vetted_matches,
+    GramStat, HookCue, HookLabelInput, FRAME_GRAMS, HOOK_LABEL_BATCH, HOOK_LABEL_MODEL, HOOK_LABEL_PARALLEL,
+    HOOK_MIN_SUPPORT,
 };
 use crate::AppState;
 
@@ -229,7 +230,9 @@ const HOOK_SAMPLE_CLUES: i64 = 5;
 const MINE_BATCH: i64 = 200;
 
 /// Job 2 (spec §5): refresh entity rows, import the vetted pairs, mine hooks
-/// for every entity, label them (vetted → cue → model), rerank.
+/// for every entity, keep one identity-frame hook per entity, label them
+/// (vetted → cue → model), tidy the cue-sourced labels, merge duplicate
+/// angles, rerank.
 pub async fn run_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
     let entities = resolved_entities(state).await?;
     let vetted = import_vetted(state).await?;
@@ -260,10 +263,89 @@ pub async fn run_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
             .fetch_one(&state.pool)
             .await?;
     mine_hooks(state, corpus_clues).await?;
+    cap_frame_hooks(state).await?;
     label_vetted(state, &vetted).await?;
     label_from_cues(state).await?;
-    label_with_model(state).await?;
+    label_with_model(state, LabelQueue::Fresh).await?;
+    label_with_model(state, LabelQueue::Tidy).await?;
+    merge_duplicate_hooks(state).await?;
     rerank(state).await
+}
+
+/// A cluster keyed by an identity stem (profession, nationality, category
+/// noun) is the frame, not an angle. Keep the best-supported one per entity;
+/// the rest never reach labeling. Idempotent.
+async fn cap_frame_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
+    let frames: Vec<String> = FRAME_GRAMS.iter().map(|s| s.to_string()).collect();
+    let n = sqlx::query(
+        "DELETE FROM pavlov_hooks h USING (
+           SELECT id, row_number() OVER (PARTITION BY answer_id ORDER BY support DESC, id) AS rn
+           FROM pavlov_hooks WHERE status = 'active' AND source IN ('mined', 'cue', 'model')
+             AND key_gram = ANY($1)
+         ) r
+         WHERE h.id = r.id AND r.rn > 1",
+    )
+    .bind(&frames)
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    tracing::info!("objects hooks: {n} surplus frame hooks removed");
+    Ok(())
+}
+
+/// Two labeled hooks of one entity whose cues share a content word are the
+/// same angle twice. The loser's clues, grams and exposure history fold into
+/// the keeper (vetted first, then support), then it is deleted.
+async fn merge_duplicate_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
+    let rows: Vec<(i32, i32, String, i32, String)> = sqlx::query_as(
+        "SELECT answer_id, id, cue, support, source FROM pavlov_hooks
+         WHERE status = 'active' AND cue IS NOT NULL ORDER BY answer_id, id",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut merged = 0usize;
+    let mut i = 0;
+    while i < rows.len() {
+        let answer_id = rows[i].0;
+        let mut j = i;
+        while j < rows.len() && rows[j].0 == answer_id {
+            j += 1;
+        }
+        let hooks: Vec<HookCue> = rows[i..j]
+            .iter()
+            .map(|(_, id, cue, support, source)| HookCue {
+                id: *id,
+                cue: cue.clone(),
+                support: *support as i64,
+                vetted: source == "vetted" || source == "both",
+            })
+            .collect();
+        for (keep, drop) in duplicate_hook_pairs(&hooks) {
+            let mut tx = state.pool.begin().await?;
+            sqlx::query(
+                "UPDATE pavlov_hooks k SET
+                   clue_ids = (SELECT COALESCE(array_agg(DISTINCT c ORDER BY c), '{}') FROM unnest(k.clue_ids || l.clue_ids) c),
+                   grams    = (SELECT COALESCE(array_agg(DISTINCT g ORDER BY g), '{}') FROM unnest(k.grams || l.grams) g),
+                   support  = (SELECT count(DISTINCT c) FROM unnest(k.clue_ids || l.clue_ids) c)
+                 FROM pavlov_hooks l WHERE k.id = $1 AND l.id = $2",
+            )
+            .bind(keep)
+            .bind(drop)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("UPDATE pavlov_reviews SET hook_id = $1 WHERE hook_id = $2")
+                .bind(keep)
+                .bind(drop)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM pavlov_hooks WHERE id = $1").bind(drop).execute(&mut *tx).await?;
+            tx.commit().await?;
+            merged += 1;
+        }
+        i = j;
+    }
+    tracing::info!("objects hooks: {merged} duplicate hooks merged");
+    Ok(())
 }
 
 async fn ensure_gram_df(state: &Arc<AppState>) -> Result<(), AppError> {
@@ -373,6 +455,7 @@ async fn import_vetted(state: &Arc<AppState>) -> Result<Vec<VettedMatch>, AppErr
     let pairs = parse_vetted_tsv(VETTED_TSV);
     let mut out = Vec::with_capacity(pairs.len());
     let mut unmatched = 0usize;
+    let mut leaky = 0usize;
     for p in &pairs {
         let key = entity::vetted_response_key(&p.response);
         if key.is_empty() {
@@ -395,6 +478,11 @@ async fn import_vetted(state: &Arc<AppState>) -> Result<Vec<VettedMatch>, AppErr
             tracing::warn!("vetted pair unmatched in corpus: {:?} = {:?}", p.cue, p.response);
             continue;
         };
+        // "pike's peak" for Zebulon Pike is not a cue; the list skips no leak gate.
+        if crate::pavlov::phrase_leaks_answer(&norm, &p.cue) {
+            leaky += 1;
+            continue;
+        }
         let answer_id: i32 = sqlx::query_scalar(
             "INSERT INTO pavlov_answers
                (answer_norm, answer, meta_category, phrases, phrase_tiers, score, example_clue_ids, answer_freq, vetted)
@@ -421,7 +509,7 @@ async fn import_vetted(state: &Arc<AppState>) -> Result<Vec<VettedMatch>, AppErr
                 .await?;
         out.push(VettedMatch { answer_id, cue: p.cue.clone(), lexemes });
     }
-    tracing::info!("objects hooks: {} vetted pairs matched, {unmatched} unmatched", out.len());
+    tracing::info!("objects hooks: {} vetted cues matched, {unmatched} unmatched, {leaky} leak the answer", out.len());
     Ok(out)
 }
 
@@ -432,22 +520,39 @@ fn vetted_key_gram(cue: &str) -> String {
     format!("vetted:{slug}")
 }
 
-/// A vetted cue labels the cluster whose grams it hits; otherwise it becomes
-/// its own hook, with member clues found by full-text search.
+/// A vetted cue labels the first cluster whose grams it hits and that no
+/// other vetted cue took this run; otherwise it becomes its own hook, with
+/// member clues found by full-text search. Earlier runs' vetted labels are
+/// cleared first so a re-cut list (the "&" split) replaces them cleanly.
 async fn label_vetted(state: &Arc<AppState>, vetted: &[VettedMatch]) -> Result<(), AppError> {
+    sqlx::query("UPDATE pavlov_hooks SET cue = NULL, source = 'mined' WHERE source = 'both'")
+        .execute(&state.pool)
+        .await?;
+    let current: Vec<String> = vetted.iter().map(|v| vetted_key_gram(&v.cue)).collect();
+    let stale = sqlx::query("DELETE FROM pavlov_hooks WHERE source = 'vetted' AND NOT (key_gram = ANY($1))")
+        .bind(&current)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+    tracing::info!("objects hooks: {stale} stale vetted hooks removed");
+    let mut taken: std::collections::HashSet<i32> = std::collections::HashSet::new();
     for v in vetted {
         let hooks: Vec<(i32, Vec<String>)> = sqlx::query_as(
-            "SELECT id, grams FROM pavlov_hooks WHERE answer_id = $1 AND status = 'active' ORDER BY rank",
+            "SELECT id, grams FROM pavlov_hooks WHERE answer_id = $1 AND status = 'active' AND source <> 'vetted'
+             ORDER BY rank",
         )
         .bind(v.answer_id)
         .fetch_all(&state.pool)
         .await?;
-        if let Some((id, _)) = hooks.iter().find(|(_, grams)| vetted_matches(&v.lexemes, grams)) {
+        if let Some((id, _)) =
+            hooks.iter().find(|(id, grams)| !taken.contains(id) && vetted_matches(&v.lexemes, grams))
+        {
             sqlx::query("UPDATE pavlov_hooks SET cue = $2, source = 'both' WHERE id = $1")
                 .bind(id)
                 .bind(&v.cue)
                 .execute(&state.pool)
                 .await?;
+            taken.insert(*id);
             continue;
         }
         let clue_ids: Vec<i32> = sqlx::query_scalar(
@@ -501,84 +606,130 @@ struct PendingHook {
     key_gram: String,
     grams: Vec<String>,
     clue_ids: Vec<i32>,
+    cue: Option<String>,
 }
 
-/// Batched model labels for whatever is still unlabeled. Resumable: each
-/// batch is marked attempted before the call, and the loop ends when nothing
-/// unattempted remains.
-async fn label_with_model(state: &Arc<AppState>) -> Result<(), AppError> {
+#[derive(Clone, Copy, PartialEq)]
+enum LabelQueue {
+    /// Hooks with no label yet.
+    Fresh,
+    /// Hooks labeled from a v2 cue phrase — a fragment clipped from one clue
+    /// ("of \"Sense & Sensibility\" who") — sent once with that draft to be
+    /// rewritten as a complete cue. A rejected rewrite keeps the draft.
+    Tidy,
+}
+
+/// Batched model labels. Resumable: each batch is claimed
+/// (`label_attempted_at`) before its call, HOOK_LABEL_PARALLEL batches are in
+/// flight at once, and the loop ends when nothing unclaimed remains.
+async fn label_with_model(state: &Arc<AppState>, queue: LabelQueue) -> Result<(), AppError> {
     if state.config.openai_api_key.is_empty() {
         tracing::warn!("objects hooks: no OPENAI_API_KEY — skipping model labels");
         return Ok(());
     }
-    loop {
-        let batch: Vec<PendingHook> = sqlx::query_as(
-            "SELECT h.id, pa.answer, h.key_gram, h.grams, h.clue_ids
+    let pending_sql = match queue {
+        LabelQueue::Fresh => {
+            "SELECT h.id, pa.answer, h.key_gram, h.grams, h.clue_ids, h.cue
              FROM pavlov_hooks h JOIN pavlov_answers pa ON pa.id = h.answer_id
              WHERE h.cue IS NULL AND h.status = 'active' AND h.label_attempted_at IS NULL
-             ORDER BY h.id LIMIT $1",
-        )
-        .bind(HOOK_LABEL_BATCH)
-        .fetch_all(&state.pool)
-        .await?;
-        if batch.is_empty() {
+             ORDER BY h.id LIMIT $1"
+        }
+        LabelQueue::Tidy => {
+            "SELECT h.id, pa.answer, h.key_gram, h.grams, h.clue_ids, h.cue
+             FROM pavlov_hooks h JOIN pavlov_answers pa ON pa.id = h.answer_id
+             WHERE h.cue IS NOT NULL AND h.source = 'cue' AND h.status = 'active' AND h.label_attempted_at IS NULL
+             ORDER BY h.id LIMIT $1"
+        }
+    };
+    loop {
+        let claimed: Vec<PendingHook> = sqlx::query_as(pending_sql)
+            .bind(HOOK_LABEL_BATCH * HOOK_LABEL_PARALLEL as i64)
+            .fetch_all(&state.pool)
+            .await?;
+        if claimed.is_empty() {
             return Ok(());
         }
-        let ids: Vec<i32> = batch.iter().map(|b| b.id).collect();
+        let ids: Vec<i32> = claimed.iter().map(|b| b.id).collect();
         sqlx::query("UPDATE pavlov_hooks SET label_attempted_at = now() WHERE id = ANY($1)")
             .bind(&ids)
             .execute(&state.pool)
             .await?;
 
-        let mut inputs = Vec::with_capacity(batch.len());
-        for b in &batch {
-            let clues: Vec<String> = sqlx::query_scalar(
-                "SELECT coalesce(answer, '') FROM jeopardy_questions WHERE id = ANY($1)
-                 ORDER BY air_date DESC NULLS LAST LIMIT $2",
-            )
-            .bind(&b.clue_ids)
-            .bind(HOOK_SAMPLE_CLUES)
-            .fetch_all(&state.pool)
-            .await?;
-            inputs.push(HookLabelInput {
-                answer: b.answer.clone(),
-                key_gram: b.key_gram.clone(),
-                grams: b.grams.clone(),
-                sample_clues: clues,
-            });
+        let mut handles = Vec::new();
+        for batch in claimed.chunks(HOOK_LABEL_BATCH as usize) {
+            let mut inputs = Vec::with_capacity(batch.len());
+            for b in batch {
+                let clues: Vec<String> = sqlx::query_scalar(
+                    "SELECT coalesce(answer, '') FROM jeopardy_questions WHERE id = ANY($1)
+                     ORDER BY air_date DESC NULLS LAST LIMIT $2",
+                )
+                .bind(&b.clue_ids)
+                .bind(HOOK_SAMPLE_CLUES)
+                .fetch_all(&state.pool)
+                .await?;
+                inputs.push(HookLabelInput {
+                    answer: b.answer.clone(),
+                    key_gram: b.key_gram.clone(),
+                    grams: b.grams.clone(),
+                    sample_clues: clues,
+                    hint: match queue {
+                        LabelQueue::Fresh => None,
+                        LabelQueue::Tidy => b.cue.clone(),
+                    },
+                });
+            }
+            let ids: Vec<i32> = batch.iter().map(|b| b.id).collect();
+            let key = state.config.openai_api_key.clone();
+            handles.push(tokio::spawn(async move {
+                let (system, user) = hook_label_prompts(&inputs);
+                let response = crate::openai::chat_json(&key, HOOK_LABEL_MODEL, &system, &user, 0.3).await;
+                (ids, inputs, response)
+            }));
         }
-        let (system, user) = hook_label_prompts(&inputs);
-        let response =
-            match crate::openai::chat_json(&state.config.openai_api_key, HOOK_LABEL_MODEL, &system, &user, 0.3).await
-            {
+        for handle in handles {
+            let (ids, inputs, response) =
+                handle.await.map_err(|e| AppError::Internal(format!("label task panicked: {e}")))?;
+            let response = match response {
                 Ok(r) => r,
                 Err(e) => {
-                    // This batch is already marked `label_attempted_at`, so it
-                    // will retry next run's reset; let `rerank` still run
-                    // instead of aborting the whole hooks job on one transient
+                    // Claimed batches retry on the next run's reset; let the
+                    // rest of the job run instead of aborting on one transient
                     // model failure.
                     tracing::warn!("objects hooks: model batch failed, stopping labels for this run: {e:?}");
                     return Ok(());
                 }
             };
-        let mut labeled = 0usize;
-        for out in parse_hook_labels(&response, &inputs) {
-            let Some(cue) = out.cue else { continue };
-            let Some(b) = batch
-                .iter()
-                .find(|b| b.key_gram == out.key_gram && b.answer.eq_ignore_ascii_case(&out.answer))
-            else {
-                continue;
-            };
-            sqlx::query("UPDATE pavlov_hooks SET cue = $2, source = 'model', model = $3 WHERE id = $1 AND cue IS NULL")
-                .bind(b.id)
+            let mut labeled = 0usize;
+            for out in parse_hook_labels(&response, &inputs) {
+                let Some(cue) = out.cue else { continue };
+                let Some(pos) =
+                    inputs.iter().position(|i| i.key_gram == out.key_gram && i.answer.eq_ignore_ascii_case(&out.answer))
+                else {
+                    continue;
+                };
+                let id = ids[pos];
+                let n = match queue {
+                    LabelQueue::Fresh => {
+                        sqlx::query("UPDATE pavlov_hooks SET cue = $2, source = 'model', model = $3 WHERE id = $1 AND cue IS NULL")
+                    }
+                    LabelQueue::Tidy => {
+                        sqlx::query("UPDATE pavlov_hooks SET cue = $2, model = $3 WHERE id = $1 AND source = 'cue' AND cue <> $2")
+                    }
+                }
+                .bind(id)
                 .bind(&cue)
                 .bind(HOOK_LABEL_MODEL)
                 .execute(&state.pool)
-                .await?;
-            labeled += 1;
+                .await?
+                .rows_affected();
+                labeled += n as usize;
+            }
+            let what = match queue {
+                LabelQueue::Fresh => "labeled",
+                LabelQueue::Tidy => "tidied",
+            };
+            tracing::info!("objects hooks: model batch of {} → {labeled} {what}", inputs.len());
         }
-        tracing::info!("objects hooks: model batch of {} → {labeled} labeled", batch.len());
     }
 }
 
