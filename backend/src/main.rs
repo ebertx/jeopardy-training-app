@@ -121,6 +121,7 @@ async fn run() {
         .route("/api/admin/pavlov/generate", post(routes::pavlov::generate))
         .route("/api/admin/pavlov/resolve", post(routes::pavlov::resolve))
         .route("/api/admin/pavlov/hooks", post(routes::pavlov::hooks))
+        .route("/api/admin/pavlov/judge", post(routes::pavlov::judge))
         .route("/api/admin/pavlov/status", get(routes::pavlov::status))
         .route("/api/pavlov/answers", get(routes::pavlov::answers))
         .route("/api/pavlov/answers/{id}/suspend", post(routes::pavlov::suspend))

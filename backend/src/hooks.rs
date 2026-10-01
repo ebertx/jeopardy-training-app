@@ -909,3 +909,327 @@ mod tests {
         assert!(duplicate_hook_pairs(&[]).is_empty());
     }
 }
+
+// ---------------------------------------------------------------- breadth judge
+
+/// The blind guesser needs world knowledge; the rewrite needs judgment.
+pub const HOOK_JUDGE_MODEL: &str = "gpt-4o";
+/// Same-referent checks ("Quran" vs "the Koran") are easy; a small model will do.
+pub const HOOK_ADJUDICATE_MODEL: &str = "gpt-4o-mini";
+pub const HOOK_JUDGE_BATCH: i64 = 20;
+pub const HOOK_JUDGE_PARALLEL: usize = 6;
+const MAX_REWRITE_WORDS: usize = 10;
+
+/// One hook as the drill shows it: the hint under its broad category.
+#[derive(Debug, Clone)]
+pub struct JudgeInput {
+    pub id: i32,
+    pub answer: String,
+    pub forms: Vec<String>,
+    pub category: String,
+    pub cue: String,
+    pub clues: Vec<String>,
+}
+
+/// What the blind guesser said for one hint.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BlindGuess {
+    pub guess: String,
+    pub rivals: Vec<String>,
+}
+
+/// The sighted ruling on a blind guess.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Ruling {
+    /// The guess names this answer (alias, spelling or fuller form counts).
+    pub guess_matches: bool,
+    /// The answer turned up among the rivals instead.
+    pub answer_among_rivals: bool,
+    /// Every other answer the hint fits as well — the guess included when it
+    /// is not this answer.
+    pub others: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Verdict {
+    /// The hint lands on this answer and nothing else.
+    Pass,
+    /// The hint reaches this answer but fits others as well.
+    Broad,
+    /// The hint does not reach this answer at all.
+    Miss,
+}
+
+impl Verdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verdict::Pass => "pass",
+            Verdict::Broad => "broad",
+            Verdict::Miss => "miss",
+        }
+    }
+}
+
+pub fn verdict(r: &Ruling) -> Verdict {
+    if r.guess_matches && r.others.is_empty() {
+        Verdict::Pass
+    } else if r.guess_matches || r.answer_among_rivals {
+        Verdict::Broad
+    } else {
+        Verdict::Miss
+    }
+}
+
+/// The drill test without the answer: hint + category in, best answer and
+/// equally good rivals out.
+pub fn blind_prompts(batch: &[JudgeInput]) -> (String, String) {
+    let system = "You are a strong Jeopardy! champion playing a recall drill. Each item is a short hint plus \
+its broad category. Give your single best answer, and list every OTHER well-known answer that fits the hint \
+about as well as your best one (answers a knowledgeable player could reasonably give instead). Be honest: a \
+hint like 'Tennessee Williams play' fits several plays; 'wading bird' fits several birds; 'queen of the gods' \
+fits Hera and Juno and Frigg. Do not list far-fetched answers. Respond with JSON only: {\"items\": [{\"id\": \
+number (echoed), \"answer\": string, \"rivals\": [string]}]}"
+        .to_string();
+    let items: Vec<Value> = batch
+        .iter()
+        .map(|b| serde_json::json!({ "id": b.id, "category": b.category, "hint": b.cue }))
+        .collect();
+    (system, serde_json::to_string_pretty(&serde_json::json!({ "items": items })).expect("serializable"))
+}
+
+pub fn parse_blind(v: &Value) -> BTreeMap<i32, BlindGuess> {
+    let Some(items) = v.get("items").and_then(|i| i.as_array()) else {
+        return BTreeMap::new();
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let id = json_id(it.get("id")?)?;
+            let guess = it.get("answer").and_then(|a| a.as_str()).unwrap_or("").trim().to_string();
+            Some((id, BlindGuess { guess, rivals: string_list(it.get("rivals")) }))
+        })
+        .collect()
+}
+
+/// Sighted: does the guess (or a rival) name this answer? Rivals that are
+/// the same thing under another name are not rivals.
+pub fn adjudicate_prompts(batch: &[(JudgeInput, BlindGuess)]) -> (String, String) {
+    let system = "You check a Jeopardy! recall drill. Each item has the correct answer (with accepted forms), a \
+player's guess, and other answers the player said would fit. Decide (1) guess_matches: does the guess name \
+the same person, place, work or thing as the correct answer? Aliases, spellings, fuller or shorter forms \
+count ('Quran' = 'the Koran', 'Massachusetts Institute of Technology' = 'MIT', 'ozone layer' = 'ozone', \
+'banana' = 'bananas'); a related but different thing does not ('Legionnaires' disease' is not 'the American \
+Legion', 'Hungary' is not 'Budapest'). (2) answer_among_rivals: does any listed rival name the correct \
+answer? (3) others: every answer from the guess and the rivals that names something DIFFERENT from the \
+correct answer, each listed once. Respond with JSON only: {\"items\": [{\"id\": number (echoed), \
+\"guess_matches\": bool, \"answer_among_rivals\": bool, \"others\": [string]}]}"
+        .to_string();
+    let items: Vec<Value> = batch
+        .iter()
+        .map(|(b, g)| {
+            serde_json::json!({
+                "id": b.id, "correct_answer": b.answer, "accepted_forms": b.forms,
+                "guess": g.guess, "rivals": g.rivals,
+            })
+        })
+        .collect();
+    (system, serde_json::to_string_pretty(&serde_json::json!({ "items": items })).expect("serializable"))
+}
+
+pub fn parse_rulings(v: &Value) -> BTreeMap<i32, Ruling> {
+    let Some(items) = v.get("items").and_then(|i| i.as_array()) else {
+        return BTreeMap::new();
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let id = json_id(it.get("id")?)?;
+            Some((
+                id,
+                Ruling {
+                    guess_matches: it.get("guess_matches").and_then(|b| b.as_bool()).unwrap_or(false),
+                    answer_among_rivals: it.get("answer_among_rivals").and_then(|b| b.as_bool()).unwrap_or(false),
+                    others: string_list(it.get("others")),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// One repair attempt for a hint that failed: keep the angle, add the detail
+/// from its own clues that rules the rivals out.
+pub fn rewrite_prompts(batch: &[(JudgeInput, Vec<String>)]) -> (String, String) {
+    let system = "You repair Jeopardy! recall hints that are too broad or point to the wrong answer. Each item \
+has the answer, the current hint, the answers a player gave instead, and real clues about the same angle. \
+Write a new hint of 3 to 10 words that keeps the angle but adds the one detail from the clues that only this \
+answer has, so a player lands on this answer and not the others (e.g. 'Tennessee Williams play, Pulitzer \
+Prize' with rival 'A Streetcar Named Desire' → 'Tennessee Williams play with Big Daddy'; 'queen of the gods' \
+with rival 'Hera' → 'Roman queen of the gods'). Use only facts from the clues and the current hint. NEVER \
+include the answer or any word of it. No leading 'this' or 'these'. Respond with JSON only: {\"items\": \
+[{\"id\": number (echoed), \"hint\": string}]}"
+        .to_string();
+    let items: Vec<Value> = batch
+        .iter()
+        .map(|(b, others)| {
+            serde_json::json!({
+                "id": b.id, "answer": b.answer, "hint": b.cue, "player_said_instead": others, "clues": b.clues,
+            })
+        })
+        .collect();
+    (system, serde_json::to_string_pretty(&serde_json::json!({ "items": items })).expect("serializable"))
+}
+
+/// Rewrites pass the label gates (length, answer leak, hedges, grounding in
+/// the clues or the old hint); a rejected rewrite is `None` for that id.
+pub fn parse_rewrites(v: &Value, inputs: &[JudgeInput]) -> BTreeMap<i32, Option<String>> {
+    let Some(items) = v.get("items").and_then(|i| i.as_array()) else {
+        return BTreeMap::new();
+    };
+    items
+        .iter()
+        .filter_map(|it| {
+            let id = json_id(it.get("id")?)?;
+            let input = inputs.iter().find(|i| i.id == id)?;
+            let raw = it.get("hint").and_then(|h| h.as_str()).unwrap_or("");
+            let cue = trim_scaffolding(&unwrap_quotes(raw.trim()));
+            let mut grounding = input.clues.clone();
+            grounding.push(input.cue.clone());
+            let hedged = norm_tokens(&cue).iter().any(|t| HEDGES.contains(&t.as_str()));
+            let ok = !cue.is_empty()
+                && cue.split_whitespace().count() <= MAX_REWRITE_WORDS
+                && !cue.eq_ignore_ascii_case(&input.cue)
+                && !phrase_leaks_answer(&input.answer, &cue)
+                && input.forms.iter().all(|f| !phrase_leaks_answer(f, &cue))
+                && rewrite_grounded(&cue, &grounding)
+                && !hedged;
+            Some((id, ok.then_some(cue)))
+        })
+        .collect()
+}
+
+/// Looser than `label_grounded`: a repair needs connectives the clues may
+/// lack ("with", "features", "named"), but invented facts are names and
+/// numbers. Every capitalized word and every number must appear in a clue,
+/// and at least one content word (≥ 4 chars) must tie the hint to them.
+pub fn rewrite_grounded(cue: &str, sources: &[String]) -> bool {
+    let known: std::collections::HashSet<String> = sources.iter().flat_map(|c| norm_tokens(c)).collect();
+    let mut anchored = false;
+    for word in cue.split_whitespace() {
+        let strict = word.chars().any(|c| c.is_ascii_digit())
+            || word.trim_start_matches(|c: char| !c.is_alphanumeric()).starts_with(char::is_uppercase);
+        for t in norm_tokens(word) {
+            let grounded = known.contains(&t);
+            if strict && !grounded {
+                return false;
+            }
+            anchored |= grounded && t.chars().count() >= 4;
+        }
+    }
+    anchored
+}
+
+fn json_id(v: &Value) -> Option<i32> {
+    v.as_i64().map(|n| n as i32).or_else(|| v.as_str()?.trim().parse().ok())
+}
+
+fn string_list(v: Option<&Value>) -> Vec<String> {
+    v.and_then(|r| r.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod judge_tests {
+    use super::*;
+
+    fn ji(id: i32, answer: &str, forms: &[&str], cue: &str, clues: &[&str]) -> JudgeInput {
+        JudgeInput {
+            id,
+            answer: answer.into(),
+            forms: forms.iter().map(|s| s.to_string()).collect(),
+            category: "Literature & Language".into(),
+            cue: cue.into(),
+            clues: clues.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn ruling(m: bool, among: bool, others: &[&str]) -> Ruling {
+        Ruling { guess_matches: m, answer_among_rivals: among, others: others.iter().map(|s| s.to_string()).collect() }
+    }
+
+    #[test]
+    fn verdict_passes_only_a_unique_hit() {
+        assert_eq!(verdict(&ruling(true, false, &[])), Verdict::Pass);
+        // "Tennessee Williams' family drama" → Glass Menagerie, but Cat fits too.
+        assert_eq!(verdict(&ruling(true, false, &["Cat on a Hot Tin Roof"])), Verdict::Broad);
+        // "queen of the gods" → Hera first, Juno among the rivals.
+        assert_eq!(verdict(&ruling(false, true, &["Hera", "Frigg"])), Verdict::Broad);
+        // "Bela Bartok's Dance Suite" → Hungary, never Budapest.
+        assert_eq!(verdict(&ruling(false, false, &["Hungary"])), Verdict::Miss);
+        assert_eq!(verdict(&Ruling::default()), Verdict::Miss);
+    }
+
+    #[test]
+    fn blind_prompt_never_shows_the_answer() {
+        let (system, user) = blind_prompts(&[ji(7, "Cat on a Hot Tin Roof", &[], "Tennessee Williams play", &["Big Daddy"])]);
+        assert!(system.contains("JSON"));
+        assert!(user.contains("Tennessee Williams play") && user.contains("Literature & Language"));
+        assert!(!user.contains("Cat on a Hot Tin Roof") && !user.contains("Big Daddy"));
+    }
+
+    #[test]
+    fn blind_and_rulings_parse_leniently() {
+        let v = serde_json::json!({ "items": [
+            { "id": 7, "answer": " A Streetcar Named Desire ", "rivals": ["Cat on a Hot Tin Roof", "", 3] },
+            { "id": "8", "answer": "Hera" },
+            { "answer": "no id" }
+        ]});
+        let b = parse_blind(&v);
+        assert_eq!(b[&7], BlindGuess { guess: "A Streetcar Named Desire".into(), rivals: vec!["Cat on a Hot Tin Roof".into()] });
+        assert_eq!(b[&8].rivals, Vec::<String>::new());
+        assert_eq!(b.len(), 2);
+
+        let v = serde_json::json!({ "items": [
+            { "id": 7, "guess_matches": false, "answer_among_rivals": true, "others": ["A Streetcar Named Desire"] },
+            { "id": 8 }
+        ]});
+        let r = parse_rulings(&v);
+        assert_eq!(r[&7], ruling(false, true, &["A Streetcar Named Desire"]));
+        assert_eq!(r[&8], Ruling::default());
+        assert!(parse_rulings(&serde_json::json!("garbage")).is_empty());
+    }
+
+    #[test]
+    fn rewrites_must_be_new_grounded_and_leak_free() {
+        let inputs = vec![
+            ji(1, "Cat on a Hot Tin Roof", &[], "Tennessee Williams play, Pulitzer Prize",
+               &["Big Daddy's 65th birthday is the occasion in this Tennessee Williams play"]),
+            ji(2, "Juno", &[], "queen of the gods", &["Roman queen of the gods, wife of Jupiter"]),
+            ji(3, "Grieg", &["Edvard Grieg"], "Norwegian composer", &["Edvard Grieg wrote Peer Gynt music"]),
+        ];
+        let v = serde_json::json!({ "items": [
+            { "id": 1, "hint": "\"Tennessee Williams play with Big Daddy\"" },
+            { "id": 2, "hint": "queen of the gods" },
+            { "id": 3, "hint": "Edvard's Peer Gynt music" },
+            { "id": 4, "hint": "no such input" }
+        ]});
+        let out = parse_rewrites(&v, &inputs);
+        assert_eq!(out[&1].as_deref(), Some("Tennessee Williams play with Big Daddy"));
+        assert_eq!(out[&2], None, "unchanged hint is not a repair");
+        assert_eq!(out[&3], None, "leaks an accepted form");
+        assert!(!out.contains_key(&4));
+
+        // Connectives are fine; invented names are not.
+        let v = serde_json::json!({ "items": [{ "id": 1, "hint": "play features character named Big Daddy" }] });
+        assert_eq!(parse_rewrites(&v, &inputs)[&1].as_deref(), Some("play features character named Big Daddy"));
+        // Invented facts (not in the clues or the old hint) are rejected.
+        let v = serde_json::json!({ "items": [{ "id": 1, "hint": "Williams play set on a Mississippi plantation" }] });
+        assert_eq!(parse_rewrites(&v, &inputs)[&1], None);
+    }
+}

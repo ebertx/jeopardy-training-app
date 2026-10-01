@@ -64,6 +64,13 @@ pub async fn hooks(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result
     .await
 }
 
+pub async fn judge(State(state): State<Arc<AppState>>, auth: AuthUser) -> Result<Json<Value>, AppError> {
+    spawn_admin_job(state, &auth, "judge", true, |st| async move {
+        crate::objects::run_judge(&st).await
+    })
+    .await
+}
+
 pub async fn status(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
@@ -85,6 +92,20 @@ pub async fn status(
     )
     .fetch_one(&state.pool)
     .await?;
+    let (judged, rewritten, judge_dropped, judge_kept): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE judge IS NOT NULL),
+                count(*) FILTER (WHERE judge = 'rewritten'),
+                count(*) FILTER (WHERE judge IN ('broad', 'miss') AND status = 'dropped'),
+                count(*) FILTER (WHERE judge IN ('broad', 'miss') AND status = 'active')
+         FROM pavlov_hooks",
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    let unjudged: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pavlov_hooks WHERE status = 'active' AND cue IS NOT NULL AND cue <> '' AND judge IS NULL",
+    )
+    .fetch_one(&state.pool)
+    .await?;
     let entities_pending: i64 =
         sqlx::query_scalar("SELECT count(*) FROM pavlov_answers WHERE hooks_built_at IS NULL")
             .fetch_one(&state.pool)
@@ -101,6 +122,11 @@ pub async fn status(
             "unlabeled": total - labeled,
             "vetted": vetted,
             "entitiesPending": entities_pending,
+            "judged": judged,
+            "unjudged": unjudged,
+            "rewritten": rewritten,
+            "judgeDropped": judge_dropped,
+            "judgeKept": judge_kept,
         },
     })))
 }
@@ -171,9 +197,10 @@ pub async fn answers(
     }
 
     #[derive(sqlx::FromRow)]
-    struct HookListRow { id: i32, answer_id: i32, rank: i32, cue: Option<String>, key_gram: String, support: i32, source: String, status: String }
+    struct HookListRow { id: i32, answer_id: i32, rank: i32, cue: Option<String>, key_gram: String, support: i32, source: String, status: String, judge: Option<String>, judge_rivals: Vec<String>, cue_before_judge: Option<String> }
     let hook_rows: Vec<HookListRow> = sqlx::query_as(
-        "SELECT id, answer_id, rank, cue, key_gram, support, source, status FROM pavlov_hooks ORDER BY answer_id, rank, id",
+        "SELECT id, answer_id, rank, cue, key_gram, support, source, status, judge, judge_rivals, cue_before_judge
+         FROM pavlov_hooks ORDER BY answer_id, rank, id",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -182,6 +209,7 @@ pub async fn answers(
         hooks_by_answer.entry(h.answer_id).or_default().push(json!({
             "id": h.id, "rank": h.rank, "cue": h.cue, "keyGram": h.key_gram,
             "support": h.support, "source": h.source, "status": h.status,
+            "judge": h.judge, "judgeRivals": h.judge_rivals, "cueBeforeJudge": h.cue_before_judge,
         }));
     }
 
@@ -245,8 +273,14 @@ pub async fn suspend(
     Ok(Json(json!({ "suspended": body.suspended })))
 }
 
+/// A user drop of a hint the judge failed (kept as an entity's last hook)
+/// clears that verdict, so `restore_last_hooks` does not bring it back.
 async fn set_hook_status(state: &Arc<AppState>, id: i32, status: &str) -> Result<Json<Value>, AppError> {
-    let n = sqlx::query("UPDATE pavlov_hooks SET status = $2 WHERE id = $1")
+    let n = sqlx::query(
+        "UPDATE pavlov_hooks SET status = $2,
+           judge = CASE WHEN $2 = 'dropped' AND judge IN ('broad', 'miss') THEN NULL ELSE judge END
+         WHERE id = $1",
+    )
         .bind(id)
         .bind(status)
         .execute(&state.pool)

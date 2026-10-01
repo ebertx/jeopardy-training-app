@@ -8,6 +8,11 @@ use std::sync::Arc;
 use crate::entity::{self, Entity, Form};
 use crate::error::AppError;
 use crate::hooks::{
+    adjudicate_prompts, blind_prompts, parse_blind, parse_rewrites, parse_rulings, rewrite_prompts, verdict,
+    BlindGuess, JudgeInput, Ruling, Verdict, HOOK_ADJUDICATE_MODEL, HOOK_JUDGE_BATCH, HOOK_JUDGE_MODEL,
+    HOOK_JUDGE_PARALLEL,
+};
+use crate::hooks::{
     cluster_hooks, duplicate_hook_pairs, hook_label_prompts, hook_tidy_prompts, is_fragment_cue, parse_hook_labels,
     parse_vetted_tsv, vetted_matches, GramStat, HookCue, HookLabelInput, FRAME_GRAMS, HOOK_LABEL_BATCH,
     HOOK_LABEL_MODEL, HOOK_LABEL_PARALLEL, HOOK_MIN_SUPPORT,
@@ -268,7 +273,17 @@ pub async fn run_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
     label_from_cues(state).await?;
     label_with_model(state, LabelQueue::Fresh).await?;
     label_with_model(state, LabelQueue::Tidy).await?;
+    judge_hooks(state).await?;
     merge_duplicate_hooks(state).await?;
+    restore_last_hooks(state).await?;
+    rerank(state).await
+}
+
+/// Job 3: the breadth judge on its own (no re-mining). Resumable.
+pub async fn run_judge(state: &Arc<AppState>) -> Result<(), AppError> {
+    judge_hooks(state).await?;
+    merge_duplicate_hooks(state).await?;
+    restore_last_hooks(state).await?;
     rerank(state).await
 }
 
@@ -565,7 +580,9 @@ fn vetted_key_gram(cue: &str) -> String {
 /// member clues found by full-text search. Earlier runs' vetted labels are
 /// cleared first so a re-cut list (the "&" split) replaces them cleanly.
 async fn label_vetted(state: &Arc<AppState>, vetted: &[VettedMatch]) -> Result<(), AppError> {
-    sqlx::query("UPDATE pavlov_hooks SET cue = NULL, source = 'mined' WHERE source = 'both'")
+    // A judged hook keeps its (possibly repaired) hint; re-cutting it would
+    // undo the repair and re-judge it every run.
+    sqlx::query("UPDATE pavlov_hooks SET cue = NULL, source = 'mined' WHERE source = 'both' AND judge IS NULL")
         .execute(&state.pool)
         .await?;
     let current: Vec<String> = vetted.iter().map(|v| vetted_key_gram(&v.cue)).collect();
@@ -577,16 +594,22 @@ async fn label_vetted(state: &Arc<AppState>, vetted: &[VettedMatch]) -> Result<(
     tracing::info!("objects hooks: {stale} stale vetted hooks removed");
     let mut taken: std::collections::HashSet<i32> = std::collections::HashSet::new();
     for v in vetted {
-        let hooks: Vec<(i32, Vec<String>)> = sqlx::query_as(
-            "SELECT id, grams FROM pavlov_hooks WHERE answer_id = $1 AND status = 'active' AND source <> 'vetted'
+        // `judged`: a 'both' hook the judge already ruled on keeps its hint.
+        let hooks: Vec<(i32, Vec<String>, bool)> = sqlx::query_as(
+            "SELECT id, grams, (source = 'both' AND judge IS NOT NULL) FROM pavlov_hooks
+             WHERE answer_id = $1 AND status = 'active' AND source <> 'vetted'
              ORDER BY rank",
         )
         .bind(v.answer_id)
         .fetch_all(&state.pool)
         .await?;
-        if let Some((id, _)) =
-            hooks.iter().find(|(id, grams)| !taken.contains(id) && vetted_matches(&v.lexemes, grams))
+        if let Some((id, _, judged)) =
+            hooks.iter().find(|(id, grams, _)| !taken.contains(id) && vetted_matches(&v.lexemes, grams))
         {
+            if *judged {
+                taken.insert(*id);
+                continue;
+            }
             sqlx::query("UPDATE pavlov_hooks SET cue = $2, source = 'both' WHERE id = $1")
                 .bind(id)
                 .bind(&v.cue)
@@ -609,7 +632,8 @@ async fn label_vetted(state: &Arc<AppState>, vetted: &[VettedMatch]) -> Result<(
             "INSERT INTO pavlov_hooks (answer_id, key_gram, rank, cue, grams, clue_ids, support, source)
              VALUES ($1, $2, 99, $3, '{}', $4, $5, 'vetted')
              ON CONFLICT (answer_id, key_gram) DO UPDATE SET
-               cue = EXCLUDED.cue, clue_ids = EXCLUDED.clue_ids, support = EXCLUDED.support",
+               cue = EXCLUDED.cue, clue_ids = EXCLUDED.clue_ids, support = EXCLUDED.support
+             WHERE pavlov_hooks.judge IS NULL",
         )
         .bind(v.answer_id)
         .bind(vetted_key_gram(&v.cue))
@@ -781,16 +805,218 @@ async fn label_with_model(state: &Arc<AppState>, queue: LabelQueue) -> Result<()
     }
 }
 
-/// Mined hooks by support, vetted-only hooks after them.
+/// Hints the judge failed (an entity's kept last hook) last, then mined hooks
+/// by support, vetted-only hooks after them.
 async fn rerank(state: &Arc<AppState>) -> Result<(), AppError> {
     sqlx::query(
         "UPDATE pavlov_hooks h SET rank = r.rn
          FROM (SELECT id, row_number() OVER (PARTITION BY answer_id
-                 ORDER BY (source = 'vetted') ASC, support DESC, id) AS rn
+                 ORDER BY COALESCE(judge IN ('broad', 'miss'), false) ASC, (source = 'vetted') ASC, support DESC, id) AS rn
                FROM pavlov_hooks WHERE status = 'active') r
          WHERE r.id = h.id",
     )
     .execute(&state.pool)
     .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------- breadth judge
+
+#[derive(sqlx::FromRow)]
+struct UnjudgedHook {
+    id: i32,
+    answer: String,
+    forms: Vec<String>,
+    meta_category: String,
+    cue: String,
+    clue_ids: Vec<i32>,
+}
+
+enum JudgeOutcome {
+    Pass,
+    Rewritten { cue: String, rivals: Vec<String> },
+    Failed { verdict: Verdict, rivals: Vec<String> },
+}
+
+/// Blind guess, then the sighted ruling, for one batch. Items the model
+/// dropped from either reply are absent and stay unjudged.
+async fn rule(key: &str, inputs: &[JudgeInput]) -> Result<std::collections::BTreeMap<i32, Ruling>, AppError> {
+    let (system, user) = blind_prompts(inputs);
+    let guesses = parse_blind(&crate::openai::chat_json(key, HOOK_JUDGE_MODEL, &system, &user, 0.0).await?);
+    let pairs: Vec<(JudgeInput, BlindGuess)> =
+        inputs.iter().filter_map(|i| Some((i.clone(), guesses.get(&i.id)?.clone()))).collect();
+    if pairs.is_empty() {
+        return Ok(Default::default());
+    }
+    let (system, user) = adjudicate_prompts(&pairs);
+    Ok(parse_rulings(&crate::openai::chat_json(key, HOOK_ADJUDICATE_MODEL, &system, &user, 0.0).await?))
+}
+
+/// Judge, repair once, re-judge (spec: rewrite then drop).
+async fn judge_batch(key: String, inputs: Vec<JudgeInput>) -> Result<Vec<(i32, JudgeOutcome)>, AppError> {
+    let first = rule(&key, &inputs).await?;
+    let mut out = Vec::new();
+    let mut failing: Vec<(JudgeInput, Vec<String>, Verdict)> = Vec::new();
+    for i in &inputs {
+        let Some(r) = first.get(&i.id) else { continue };
+        match verdict(r) {
+            Verdict::Pass => out.push((i.id, JudgeOutcome::Pass)),
+            v => failing.push((i.clone(), r.others.clone(), v)),
+        }
+    }
+    if failing.is_empty() {
+        return Ok(out);
+    }
+    let asks: Vec<(JudgeInput, Vec<String>)> = failing.iter().map(|(i, o, _)| (i.clone(), o.clone())).collect();
+    let (system, user) = rewrite_prompts(&asks);
+    let originals: Vec<JudgeInput> = asks.iter().map(|(i, _)| i.clone()).collect();
+    let rewrites = parse_rewrites(&crate::openai::chat_json(&key, HOOK_JUDGE_MODEL, &system, &user, 0.3).await?, &originals);
+    let retry: Vec<JudgeInput> = originals
+        .iter()
+        .filter_map(|i| Some(JudgeInput { cue: rewrites.get(&i.id)?.clone()?, ..i.clone() }))
+        .collect();
+    let second = if retry.is_empty() { Default::default() } else { rule(&key, &retry).await? };
+    for (i, others, v) in failing {
+        let repaired = retry.iter().find(|r| r.id == i.id);
+        match (repaired, repaired.and_then(|r| second.get(&r.id))) {
+            (Some(r), Some(ruling)) if verdict(ruling) == Verdict::Pass => {
+                out.push((i.id, JudgeOutcome::Rewritten { cue: r.cue.clone(), rivals: others }))
+            }
+            (Some(_), Some(ruling)) => {
+                out.push((i.id, JudgeOutcome::Failed { verdict: verdict(ruling), rivals: ruling.others.clone() }))
+            }
+            // The repair came back unparseable or failed a gate: the first ruling stands.
+            (None, _) if rewrites.contains_key(&i.id) => out.push((i.id, JudgeOutcome::Failed { verdict: v, rivals: others })),
+            // No usable reply for this item: leave it unjudged for the next run.
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Every active labeled hook gets the blind test: a hint that does not land
+/// on its answer alone is repaired once from its own clues and re-tested; a
+/// hint that still fails is dropped. Resumable: batches are claimed
+/// (`judged_at`) before their calls; a claim with no verdict is re-armed at
+/// the start of the next run.
+async fn judge_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
+    if state.config.openai_api_key.is_empty() {
+        tracing::warn!("objects hooks: no OPENAI_API_KEY — skipping the breadth judge");
+        return Ok(());
+    }
+    sqlx::query("UPDATE pavlov_hooks SET judged_at = NULL WHERE judged_at IS NOT NULL AND judge IS NULL")
+        .execute(&state.pool)
+        .await?;
+    let mut tally = std::collections::BTreeMap::<&str, usize>::new();
+    loop {
+        let claimed: Vec<UnjudgedHook> = sqlx::query_as(
+            "SELECT h.id, pa.answer, pa.forms, pa.meta_category, h.cue, h.clue_ids
+             FROM pavlov_hooks h JOIN pavlov_answers pa ON pa.id = h.answer_id
+             WHERE h.judged_at IS NULL AND h.status = 'active' AND h.cue IS NOT NULL AND h.cue <> ''
+             ORDER BY h.id LIMIT $1",
+        )
+        .bind(HOOK_JUDGE_BATCH * HOOK_JUDGE_PARALLEL as i64)
+        .fetch_all(&state.pool)
+        .await?;
+        if claimed.is_empty() {
+            tracing::info!("objects hooks: judge done {tally:?}");
+            return Ok(());
+        }
+        let ids: Vec<i32> = claimed.iter().map(|h| h.id).collect();
+        sqlx::query("UPDATE pavlov_hooks SET judged_at = now() WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&state.pool)
+            .await?;
+
+        let mut handles = Vec::new();
+        for batch in claimed.chunks(HOOK_JUDGE_BATCH as usize) {
+            let mut inputs = Vec::with_capacity(batch.len());
+            for h in batch {
+                let clues: Vec<String> = sqlx::query_scalar(
+                    "SELECT coalesce(answer, '') FROM jeopardy_questions WHERE id = ANY($1)
+                     ORDER BY air_date DESC NULLS LAST LIMIT $2",
+                )
+                .bind(&h.clue_ids)
+                .bind(HOOK_SAMPLE_CLUES)
+                .fetch_all(&state.pool)
+                .await?;
+                inputs.push(JudgeInput {
+                    id: h.id,
+                    answer: h.answer.clone(),
+                    forms: h.forms.clone(),
+                    category: h.meta_category.clone(),
+                    cue: h.cue.clone(),
+                    clues,
+                });
+            }
+            handles.push(tokio::spawn(judge_batch(state.config.openai_api_key.clone(), inputs)));
+        }
+        for handle in handles {
+            let outcomes = match handle.await.map_err(|e| AppError::Internal(format!("judge task panicked: {e}")))? {
+                Ok(o) => o,
+                Err(e) => {
+                    // Claims without a verdict re-arm on the next run.
+                    tracing::warn!("objects hooks: judge batch failed, stopping the judge for this run: {e:?}");
+                    return Ok(());
+                }
+            };
+            // clock_timestamp(), not now(): the trigger lets a cue change
+            // through only when judged_at changes in the same UPDATE.
+            for (id, outcome) in outcomes {
+                let q = match &outcome {
+                    JudgeOutcome::Pass => sqlx::query(
+                        "UPDATE pavlov_hooks SET judge = 'pass', judge_rivals = '{}', judged_at = clock_timestamp()
+                         WHERE id = $1",
+                    )
+                    .bind(id),
+                    JudgeOutcome::Rewritten { cue, rivals } => sqlx::query(
+                        "UPDATE pavlov_hooks SET cue_before_judge = cue, cue = $2, model = $3, judge = 'rewritten',
+                           judge_rivals = $4, judged_at = clock_timestamp()
+                         WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(cue)
+                    .bind(HOOK_JUDGE_MODEL)
+                    .bind(rivals),
+                    JudgeOutcome::Failed { verdict, rivals } => sqlx::query(
+                        "UPDATE pavlov_hooks SET status = 'dropped', judge = $2, judge_rivals = $3,
+                           judged_at = clock_timestamp()
+                         WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(verdict.as_str())
+                    .bind(rivals),
+                };
+                q.execute(&state.pool).await?;
+                *tally
+                    .entry(match outcome {
+                        JudgeOutcome::Pass => "pass",
+                        JudgeOutcome::Rewritten { .. } => "rewritten",
+                        JudgeOutcome::Failed { verdict, .. } => verdict.as_str(),
+                    })
+                    .or_default() += 1;
+            }
+        }
+        tracing::info!("objects hooks: judge progress {tally:?}");
+    }
+}
+
+/// No answer is left without a hint: an entity whose every labeled hook the
+/// judge dropped gets its best failed one back (a broad hint before one that
+/// points elsewhere, then support). Hooks the user dropped are not touched.
+async fn restore_last_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
+    let n = sqlx::query(
+        "UPDATE pavlov_hooks h SET status = 'active'
+         FROM (SELECT DISTINCT ON (x.answer_id) x.id FROM pavlov_hooks x
+               WHERE x.status = 'dropped' AND x.judge IN ('broad', 'miss') AND x.cue IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM pavlov_hooks y
+                                 WHERE y.answer_id = x.answer_id AND y.status = 'active' AND y.cue IS NOT NULL)
+               ORDER BY x.answer_id, (x.judge = 'broad') DESC, x.support DESC, x.id) r
+         WHERE h.id = r.id",
+    )
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    tracing::info!("objects hooks: {n} last hooks kept despite the judge");
     Ok(())
 }

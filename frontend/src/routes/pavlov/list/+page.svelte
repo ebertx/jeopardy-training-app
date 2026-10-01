@@ -14,6 +14,7 @@
   type HookRow = {
     id: number; rank: number; cue: string | null; keyGram: string;
     support: number; source: string; status: 'active' | 'dropped';
+    judge: 'pass' | 'rewritten' | 'broad' | 'miss' | null; judgeRivals: string[]; cueBeforeJudge: string | null;
   };
   type Card = {
     id: number; answer: string; category: string; forms: string[]; vetted: boolean;
@@ -30,7 +31,10 @@
   let examples = $state<Record<number, Example[]>>({});
   let genStatus = $state<{
     running: boolean; pending: number; active: number; dropped: number;
-    hooks?: { total: number; labeled: number; unlabeled: number; vetted: number; entitiesPending: number };
+    hooks?: {
+      total: number; labeled: number; unlabeled: number; vetted: number; entitiesPending: number;
+      judged: number; unjudged: number; rewritten: number; judgeDropped: number; judgeKept: number;
+    };
   } | null>(null);
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -123,7 +127,7 @@
     }
   }
 
-  async function runJob(job: 'generate' | 'resolve' | 'hooks') {
+  async function runJob(job: 'generate' | 'resolve' | 'hooks' | 'judge') {
     error = '';
     try {
       await api.post(`/api/admin/pavlov/${job}`);
@@ -164,11 +168,15 @@
           class="px-3 py-1.5 rounded-lg bg-jeopardy-gold text-jeopardy-blue font-medium disabled:opacity-50 hover:bg-yellow-400 transition-colors">Generate cues</button>
         <button onclick={() => runJob('hooks')} disabled={genStatus?.running}
           class="px-3 py-1.5 rounded-lg bg-jeopardy-gold text-jeopardy-blue font-medium disabled:opacity-50 hover:bg-yellow-400 transition-colors">Build hooks</button>
+        <button onclick={() => runJob('judge')} disabled={genStatus?.running}
+          title="Blind-test every hint; repair broad ones once from their clues, drop what still fails"
+          class="px-3 py-1.5 rounded-lg bg-jeopardy-gold text-jeopardy-blue font-medium disabled:opacity-50 hover:bg-yellow-400 transition-colors">Judge hooks</button>
         {#if genStatus}
           <span class="text-gray-500">
             {genStatus.running ? 'running · ' : ''}cues {genStatus.active} active · {genStatus.pending} pending
             {#if genStatus.hooks}
               · hooks {genStatus.hooks.labeled}/{genStatus.hooks.total} labeled · {genStatus.hooks.vetted} vetted · {genStatus.hooks.entitiesPending} entities pending
+              · judged {genStatus.hooks.judged} ({genStatus.hooks.unjudged} to go) · {genStatus.hooks.rewritten} repaired · {genStatus.hooks.judgeDropped} dropped as broad · {genStatus.hooks.judgeKept} kept as last hint
             {/if}
           </span>
         {/if}
@@ -225,6 +233,13 @@
                           {h.status === 'active' ? 'drop' : 'restore'}
                         </button>
                       </li>
+                      {#if h.judge === 'broad' || h.judge === 'miss'}
+                        <li class="pl-6 text-xs text-amber-700">
+                          {h.judge === 'broad' ? 'too broad' : 'points elsewhere'}{h.judgeRivals.length ? ` — fits ${h.judgeRivals.join(', ')}` : ''}{h.status === 'active' ? ' · kept as the only hint' : ''}
+                        </li>
+                      {:else if h.judge === 'rewritten' && h.cueBeforeJudge}
+                        <li class="pl-6 text-xs text-gray-400">was “{h.cueBeforeJudge}”{h.judgeRivals.length ? ` — fit ${h.judgeRivals.join(', ')}` : ''}</li>
+                      {/if}
                       {#if expanded.has(card.id) && examples[h.id]}
                         {#each examples[h.id] as ex}
                           <li class="pl-6 text-xs text-gray-500">“{ex.clue}” ({ex.category}{ex.airDate ? `, ${ex.airDate}` : ''})</li>
