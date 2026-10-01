@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::entity::{self, Entity, Form};
 use crate::error::AppError;
 use crate::hooks::{
-    adjudicate_prompts, blind_prompts, parse_blind, parse_rewrites, parse_rulings, rewrite_prompts, verdict,
+    adjudicate_prompts, blind_prompts, parse_blind, settle_mechanically, parse_rewrites, parse_rulings, rewrite_prompts, verdict,
     BlindGuess, JudgeInput, Ruling, Verdict, HOOK_ADJUDICATE_MODEL, HOOK_JUDGE_BATCH, HOOK_JUDGE_MODEL,
     HOOK_JUDGE_PARALLEL,
 };
@@ -849,7 +849,14 @@ async fn rule(key: &str, inputs: &[JudgeInput]) -> Result<std::collections::BTre
         return Ok(Default::default());
     }
     let (system, user) = adjudicate_prompts(&pairs);
-    Ok(parse_rulings(&crate::openai::chat_json(key, HOOK_ADJUDICATE_MODEL, &system, &user, 0.0).await?))
+    let rulings = parse_rulings(&crate::openai::chat_json(key, HOOK_ADJUDICATE_MODEL, &system, &user, 0.0).await?);
+    Ok(pairs
+        .iter()
+        .filter_map(|(i, g)| {
+            let r = rulings.get(&i.id)?.clone();
+            Some((i.id, settle_mechanically(r, g, &i.answer, &i.forms)))
+        })
+        .collect())
 }
 
 /// Judge, repair once, re-judge (spec: rewrite then drop).

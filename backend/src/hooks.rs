@@ -914,8 +914,9 @@ mod tests {
 
 /// The blind guesser needs world knowledge; the rewrite needs judgment.
 pub const HOOK_JUDGE_MODEL: &str = "gpt-4o";
-/// Same-referent checks ("Quran" vs "the Koran") are easy; a small model will do.
-pub const HOOK_ADJUDICATE_MODEL: &str = "gpt-4o-mini";
+/// gpt-4o-mini was tried first and listed the answer itself as its own rival
+/// ("the best man" vs "the best man"); `settle_mechanically` backs this up.
+pub const HOOK_ADJUDICATE_MODEL: &str = "gpt-4o";
 pub const HOOK_JUDGE_BATCH: i64 = 20;
 pub const HOOK_JUDGE_PARALLEL: usize = 6;
 const MAX_REWRITE_WORDS: usize = 10;
@@ -978,6 +979,30 @@ pub fn verdict(r: &Ruling) -> Verdict {
     } else {
         Verdict::Miss
     }
+}
+
+/// A candidate names this answer when, normalized, it contains the answer's
+/// or a form's whole name as a run of words ("Niger River" ⊃ "Niger",
+/// "Francis the Talking Mule" ⊃ "Francis"). Deliberately not the typed-answer
+/// grader: its phonetic tier accepts "Nigeria" for "Niger", which would hide a
+/// real rival. Spelling variants are left to the model.
+pub fn names_answer(candidate: &str, answer: &str, forms: &[String]) -> bool {
+    let cand = crate::answer_match::normalize(candidate);
+    let cand: Vec<&str> = cand.split_whitespace().collect();
+    std::iter::once(answer).chain(forms.iter().map(|f| f.as_str())).any(|form| {
+        let f = crate::answer_match::normalize(form);
+        let f: Vec<&str> = f.split_whitespace().collect();
+        !f.is_empty() && cand.windows(f.len()).any(|w| w == f.as_slice())
+    })
+}
+
+/// The model's ruling, corrected where string matching is certain: a guess
+/// or rival that names the answer counts as the answer, never as a rival.
+pub fn settle_mechanically(mut r: Ruling, g: &BlindGuess, answer: &str, forms: &[String]) -> Ruling {
+    r.guess_matches |= names_answer(&g.guess, answer, forms);
+    r.answer_among_rivals |= g.rivals.iter().any(|x| names_answer(x, answer, forms));
+    r.others.retain(|x| !names_answer(x, answer, forms));
+    r
 }
 
 /// The drill test without the answer: hint + category in, best answer and
@@ -1173,6 +1198,26 @@ mod judge_tests {
         // "Bela Bartok's Dance Suite" → Hungary, never Budapest.
         assert_eq!(verdict(&ruling(false, false, &["Hungary"])), Verdict::Miss);
         assert_eq!(verdict(&Ruling::default()), Verdict::Miss);
+    }
+
+    #[test]
+    fn mechanical_matching_overrides_a_confused_ruling() {
+        let forms = vec!["Niger".to_string()];
+        assert!(names_answer("Niger River", "Niger", &forms));
+        assert!(names_answer("the best man", "the best man", &[]));
+        assert!(names_answer("Atacama Desert", "the Atacama", &[]));
+        assert!(!names_answer("Nigeria", "Niger", &forms));
+        assert!(!names_answer("Johann Christian Bach", "Johann Sebastian Bach", &[]));
+
+        // gpt-4o-mini said the answer was its own rival and the guess missed.
+        let g = BlindGuess { guess: "Niger River".into(), rivals: vec!["Niger".into(), "Congo River".into()] };
+        let r = settle_mechanically(ruling(false, false, &["Niger River", "Niger", "Congo River"]), &g, "Niger", &forms);
+        assert_eq!(r, ruling(true, true, &["Congo River"]));
+        assert_eq!(verdict(&r), Verdict::Broad);
+
+        let g = BlindGuess { guess: "the best man".into(), rivals: vec![] };
+        let r = settle_mechanically(ruling(false, false, &["the best man"]), &g, "the best man", &[]);
+        assert_eq!(verdict(&r), Verdict::Pass);
     }
 
     #[test]
