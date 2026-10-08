@@ -171,18 +171,59 @@ fn is_eligible_bare_form(raw: &str) -> bool {
         && t.chars().next().is_some_and(|c| c.is_uppercase())
 }
 
+/// Lowercase words a person's name may carry ("Ludwig van", "Henri de").
+const NAME_PARTICLES: &[&str] = &[
+    "van", "von", "de", "da", "di", "del", "della", "der", "den", "du", "la", "le", "ter", "ten", "bin", "ibn",
+    "al", "el", "y",
+];
+/// A parenthetical opening with one of these is a place descriptor, not a
+/// first name: "(Lake) Erie", "(Mount) Vesuvius".
+const PLACE_WORDS: &[&str] = &[
+    "lake", "mount", "mt", "cape", "fort", "port", "isle", "bay", "gulf", "sea", "river", "mountain", "mountains",
+];
+/// A licensed first name or title must read as a person: at least this share
+/// of the bare form's clues use a personal pronoun. Measured on the live
+/// corpus (2026-10-07): companies, places and namesakes sit at 0–13%
+/// (Harvard, Stanford, Vancouver, Honda, Ferrari, Perrier, Disney, Seinfeld
+/// the show, Chanel, Kelvin the scale); people mostly at 25%+ (Hitchcock,
+/// Sartre, Liszt, Dracula, Rasputin) — clues say "this composer" more often
+/// than "he". Known misses either side: Salieri splits; Hershey, Philip,
+/// Wrigley still merge.
+pub const PERSON_PRONOUN_SHARE: f64 = 0.2;
+/// The pronoun test needs enough clues to mean anything; below this the bare
+/// form may merge as before.
+const PERSON_TEST_MIN_CLUES: i64 = 10;
+/// A place descriptor may absorb a bare form at most this many times its
+/// own size: "(Mount) Vesuvius" (21 full / 55 bare) and "(Lake) Erie" merge;
+/// "(Lake) Michigan" (59 / 228, the state) and "(Lake) Kentucky" (1 / 145) do not.
+const PLACE_MAX_BARE_RATIO: i64 = 3;
+
+pub fn is_place_license(first: &str) -> bool {
+    first.split_whitespace().next().is_some_and(|w| PLACE_WORDS.contains(&w.trim_end_matches('.')))
+}
+
 /// `"(First) Last"` → `Some((first_lower, last_key))`. The parenthetical must
 /// open the string; the remainder must be a single-word name (no commas, no
 /// digits, no spaces after normalization); the first name must be name-like
 /// (R1's rule — letters, spaces, `.`, `-`, `'`, `"`, `&`) after honorifics
 /// inside the parens are dropped, so `"(Sir Edward) Elgar"` licenses `edward`.
+/// A lowercase word other than a name particle marks a descriptor, not a
+/// name, and licenses nothing: `"(University of) Wisconsin"`, `"(cast) iron"`,
+/// `"(women's college) golf"` would otherwise swallow every bare clue.
 pub fn parenthetical_license(raw: &str) -> Option<(String, String)> {
     let t = raw.trim();
     if !t.starts_with('(') {
         return None;
     }
     let close = t.find(')')?;
-    let first = strip_honorific(t[1..close].trim()).to_lowercase();
+    let inner = strip_honorific(t[1..close].trim());
+    if inner
+        .split_whitespace()
+        .any(|w| w.starts_with(|c: char| c.is_lowercase()) && !NAME_PARTICLES.contains(&w))
+    {
+        return None;
+    }
+    let first = inner.to_lowercase();
     let last = norm_response(t[close + 1..].trim());
     if last.is_empty() || last.contains(' ') || last.contains(',') || last.chars().any(|c| c.is_ascii_digit()) {
         return None;
@@ -199,6 +240,8 @@ pub struct Form {
     pub count: i64,
     /// The dominant `classifier_category` of this form's clues; "" when none.
     pub category: String,
+    /// How many of this form's clues use a personal pronoun (he/his/she/her…).
+    pub personal: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +294,8 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
     // Every key's own dominant category (count-weighted mode), needed as the
     // right-hand side of the R3′ absorption guard. Owned (not borrowed from
     // `groups`) so it survives the `groups` consuming loop below.
+    let count_by_key: HashMap<String, i64> =
+        groups.iter().map(|(k, members)| (k.clone(), members.iter().map(|m| m.count).sum())).collect();
     let category_by_key: HashMap<String, String> = groups
         .iter()
         .map(|(k, members)| {
@@ -282,6 +327,20 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
                     dominant_category(eligible.iter().map(|m| (m.category.as_str(), m.count)));
                 if eligible_cat.is_empty() || eligible_cat != *full_cat {
                     return None; // no category match, or no category at all
+                }
+                let bare: i64 = eligible.iter().map(|m| m.count).sum();
+                if is_place_license(first) {
+                    // "(Lake) Kentucky": the descriptor must not swallow a far bigger bare answer.
+                    if bare > PLACE_MAX_BARE_RATIO * count_by_key.get(&full_key).copied().unwrap_or(0) {
+                        return None;
+                    }
+                } else {
+                    // A first name or title: the bare clues must be about a person
+                    // ("Harvard" is the university, not John Harvard).
+                    let personal: i64 = eligible.iter().map(|m| m.personal).sum();
+                    if bare >= PERSON_TEST_MIN_CLUES && (personal as f64) < PERSON_PRONOUN_SHARE * bare as f64 {
+                        return None;
+                    }
                 }
                 Some(full_key)
             });
@@ -356,9 +415,14 @@ pub fn resolve(forms: &[Form]) -> Vec<Entity> {
 mod tests {
     use super::*;
 
-    fn f(raw: &str, count: i64) -> Form { Form { raw: raw.to_string(), count, category: String::new() } }
+    fn f(raw: &str, count: i64) -> Form { Form { raw: raw.to_string(), count, category: String::new(), personal: 0 } }
+    /// A form whose clues read like a person's (half use a pronoun).
     fn fc(raw: &str, count: i64, cat: &str) -> Form {
-        Form { raw: raw.to_string(), count, category: cat.to_string() }
+        Form { raw: raw.to_string(), count, category: cat.to_string(), personal: count / 2 }
+    }
+    /// A form whose clues are about a thing or place (no pronouns).
+    fn ft(raw: &str, count: i64, cat: &str) -> Form {
+        Form { raw: raw.to_string(), count, category: cat.to_string(), personal: 0 }
     }
     fn by_key<'a>(ents: &'a [Entity], key: &str) -> &'a Entity {
         ents.iter().find(|e| e.key == key).unwrap_or_else(|| panic!("no entity {key}"))
@@ -445,6 +509,60 @@ mod tests {
         assert_eq!(parenthetical_license("Edvard Grieg"), None);
         assert_eq!(parenthetical_license("Edvard Munch (1863-1944)"), None);
         assert_eq!(parenthetical_license("(1 of) Balakirev, Borodin"), None); // last part has a comma: not a name
+        assert_eq!(parenthetical_license("(Ludwig van) Beethoven"), Some(("ludwig van".into(), "beethoven".into())));
+        // Lowercase descriptors are not first names.
+        assert_eq!(parenthetical_license("(University of) Wisconsin"), None);
+        assert_eq!(parenthetical_license("(cast) iron"), None);
+        assert_eq!(parenthetical_license("(women's college) golf"), None);
+        assert!(is_place_license("lake") && is_place_license("mt. ") && !is_place_license("john"));
+    }
+
+    #[test]
+    fn descriptors_never_swallow_the_bare_answer() {
+        // Live: "(University of) Wisconsin" (1 clue) had absorbed 151 "Wisconsin" state clues.
+        let ents = resolve(&[
+            ft("Wisconsin", 151, "Geography & Exploration"),
+            ft("the University of Wisconsin", 9, "Geography & Exploration"),
+            ft("(University of) Wisconsin", 1, "Geography & Exploration"),
+        ]);
+        assert_eq!(by_key(&ents, "wisconsin").freq, 151);
+        assert_eq!(by_key(&ents, "university of wisconsin").freq, 10);
+    }
+
+    #[test]
+    fn place_descriptors_absorb_only_a_bare_form_of_comparable_size() {
+        let ents = resolve(&[
+            ft("Kentucky", 145, "Geography & Exploration"),
+            ft("(Lake) Kentucky", 1, "Geography & Exploration"),
+        ]);
+        assert_eq!(by_key(&ents, "kentucky").freq, 145);
+        let ents = resolve(&[
+            ft("Lake Erie", 40, "Geography & Exploration"),
+            ft("(Lake) Erie", 15, "Geography & Exploration"),
+            ft("Erie", 37, "Geography & Exploration"),
+        ]);
+        assert_eq!(ents.len(), 1);
+        assert_eq!(by_key(&ents, "lake erie").freq, 92);
+    }
+
+    #[test]
+    fn a_first_name_absorbs_only_bare_clues_about_a_person() {
+        // "Harvard" clues are about the university: no pronouns.
+        let ents = resolve(&[
+            ft("Harvard", 137, "Science & Technology"),
+            fc("(John) Harvard", 2, "Science & Technology"),
+        ]);
+        assert_eq!(by_key(&ents, "harvard").freq, 137);
+        assert_eq!(by_key(&ents, "john harvard").freq, 2);
+        // "Rasputin" clues are about the man.
+        let ents = resolve(&[
+            fc("Rasputin", 63, "World History"),
+            fc("(Grigori) Rasputin", 1, "World History"),
+        ]);
+        assert_eq!(ents.len(), 1);
+        // Too few bare clues to judge: merge as before.
+        let ents = resolve(&[ft("Streep", 1, "Film, TV & Pop Culture"), fc("(Meryl) Streep", 50, "Film, TV & Pop Culture")]);
+        assert_eq!(ents.len(), 1);
     }
 
     #[test]

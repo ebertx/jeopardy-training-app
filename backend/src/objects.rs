@@ -23,15 +23,18 @@ const UPDATE_CHUNK: usize = 5000;
 
 /// Resolve the whole non-archived corpus into entities (pure, in memory).
 pub async fn resolved_entities(state: &Arc<AppState>) -> Result<Vec<Entity>, AppError> {
-    let rows: Vec<(String, i64, String)> = sqlx::query_as(
-        "SELECT question, count(*), COALESCE(mode() WITHIN GROUP (ORDER BY classifier_category), '')
+    let rows: Vec<(String, i64, String, i64)> = sqlx::query_as(
+        "SELECT question, count(*), COALESCE(mode() WITHIN GROUP (ORDER BY classifier_category), ''),
+                count(*) FILTER (WHERE answer ~* '\\m(he|his|him|himself|she|her|hers|herself)\\M')
          FROM jeopardy_questions
          WHERE archived = false AND question IS NOT NULL GROUP BY 1",
     )
     .fetch_all(&state.pool)
     .await?;
-    let forms: Vec<Form> =
-        rows.into_iter().map(|(raw, count, category)| Form { raw, count, category }).collect();
+    let forms: Vec<Form> = rows
+        .into_iter()
+        .map(|(raw, count, category, personal)| Form { raw, count, category, personal })
+        .collect();
     let entities = entity::resolve(&forms);
     tracing::info!("objects: {} response forms -> {} entities", forms.len(), entities.len());
     Ok(entities)
@@ -42,6 +45,7 @@ pub async fn resolved_entities(state: &Arc<AppState>) -> Result<Vec<Entity>, App
 /// forms / display / frequency. A rerun finds nothing left to merge.
 pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
     let entities = resolved_entities(state).await?;
+    follow_splits(state, &entities).await?;
 
     // 1. entity_norm per clue (chunked; only rows whose key changes are written)
     let pairs: Vec<(String, String)> = entities
@@ -169,8 +173,103 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
         .await?;
     }
     tracing::info!("objects resolve: {} n-gram keys rewritten", rekey.len());
+    // A split moves clues out of an entity whose n-grams were re-keyed by an
+    // earlier merge; the form-based pass above cannot see that. Re-key by clue.
+    let n = sqlx::query(
+        "UPDATE pavlov_clue_ngrams g SET answer_norm = jq.entity_norm
+         FROM jeopardy_questions jq
+         WHERE jq.id = g.clue_id AND jq.entity_norm IS NOT NULL AND g.answer_norm <> jq.entity_norm",
+    )
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    tracing::info!("objects resolve: {n} n-gram rows re-keyed by clue");
 
-    refresh_entity_rows(state, &entities).await
+    refresh_entity_rows(state, &entities).await?;
+    retire_foreign_hooks(state).await
+}
+
+/// Splits (spec 2026-10-07): when the resolver stops merging a bare form into
+/// a full name ("(University of) Wisconsin" had swallowed 151 "Wisconsin"
+/// state clues), the deck row — card, reviews, hooks — follows the side most
+/// of its active hooks' clues now belong to, if that side has no deck row of
+/// its own. "the University of Wisconsin" becomes "Wisconsin"; "vitamin C",
+/// whose hooks are about the vitamin, stays put while the letter "C" splits off.
+async fn follow_splits(state: &Arc<AppState>, entities: &[Entity]) -> Result<(), AppError> {
+    let key_of: std::collections::HashMap<&str, &str> =
+        entities.iter().flat_map(|e| e.forms.iter().map(move |f| (f.as_str(), e.key.as_str()))).collect();
+    let deck: std::collections::HashMap<i32, String> =
+        sqlx::query_as::<_, (i32, String)>("SELECT id, answer_norm FROM pavlov_answers")
+            .fetch_all(&state.pool)
+            .await?
+            .into_iter()
+            .collect();
+    let mut taken: std::collections::HashSet<String> = deck.values().cloned().collect();
+    let rows: Vec<(i32, String, i64)> = sqlx::query_as(
+        "SELECT h.answer_id, jq.question, count(*)
+         FROM pavlov_hooks h CROSS JOIN LATERAL unnest(h.clue_ids) AS c(id)
+         JOIN jeopardy_questions jq ON jq.id = c.id
+         WHERE h.status = 'active' AND jq.archived = false AND jq.question IS NOT NULL
+         GROUP BY 1, 2",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let mut tally: std::collections::BTreeMap<i32, std::collections::HashMap<&str, i64>> = Default::default();
+    for (answer_id, question, n) in &rows {
+        if let Some(key) = key_of.get(question.as_str()) {
+            *tally.entry(*answer_id).or_default().entry(key).or_default() += n;
+        }
+    }
+    let mut moved = 0usize;
+    for (answer_id, by_key) in tally {
+        let Some(current) = deck.get(&answer_id) else { continue };
+        let Some((&best, &n)) = by_key.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))) else { continue };
+        let here = by_key.get(current.as_str()).copied().unwrap_or(0);
+        if best == current || n <= here {
+            continue;
+        }
+        if taken.contains(best) {
+            tracing::warn!("objects resolve: deck row {current} mostly belongs to {best}, which already has a row — left as is");
+            continue;
+        }
+        let mut tx = state.pool.begin().await?;
+        sqlx::query("DELETE FROM pavlov_cues WHERE answer_norm = $1").bind(best).execute(&mut *tx).await?;
+        sqlx::query("UPDATE pavlov_cues SET answer_norm = $2 WHERE answer_norm = $1")
+            .bind(current)
+            .bind(best)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE pavlov_answers SET answer_norm = $2 WHERE id = $1")
+            .bind(answer_id)
+            .bind(best)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        tracing::info!("objects resolve: deck row {current} follows its hooks to {best}");
+        taken.remove(current);
+        taken.insert(best.to_string());
+        moved += 1;
+    }
+    tracing::info!("objects resolve: {moved} deck rows followed a split");
+    Ok(())
+}
+
+/// After a split, a hook whose clues mostly belong to another entity is an
+/// angle on that other answer ("Lake Kentucky" kept, the bare state clues
+/// gone). Dropped, not deleted, so review history stays linked.
+async fn retire_foreign_hooks(state: &Arc<AppState>) -> Result<(), AppError> {
+    let n = sqlx::query(
+        "UPDATE pavlov_hooks h SET status = 'dropped'
+         FROM pavlov_answers pa
+         WHERE pa.id = h.answer_id AND h.status = 'active' AND cardinality(h.clue_ids) > 0
+           AND 2 * (SELECT count(*) FROM jeopardy_questions jq
+                    WHERE jq.id = ANY(h.clue_ids) AND jq.entity_norm = pa.answer_norm) < cardinality(h.clue_ids)",
+    )
+    .execute(&state.pool)
+    .await?
+    .rows_affected();
+    tracing::info!("objects resolve: {n} hooks retired — their clues now belong to another entity");
+    Ok(())
 }
 
 /// For one user holding cards on both rows keep the one with more reps

@@ -401,3 +401,20 @@ sheets are deleted.
 Per-hook SRS (would multiply the deck 3–5× and sink the end-of-year goal);
 Wikidata or other external entity resolution; the AnkiWeb / J!Study decks
 (login-gated or paid); a browsable canon library beyond `/pavlov/list`.
+
+## Amendment 2026-10-07 — descriptor and namesake guards; splits
+
+The breadth judge exposed mis-named entities: a leading parenthetical that is not a first name had licensed
+absorbing every bare clue — "(University of) Wisconsin" (151 state clues), "(Lake) Kentucky", "(cast) iron",
+"(women's college) golf" — and real people had absorbed their namesakes ("Harvard" the university into John
+Harvard; Vancouver, Stanford, Honda, Ferrari, Perrier). Added guards on bare-surname absorption (entity.rs):
+1. A parenthetical containing a lowercase word other than a name particle (van, von, de, …) licenses nothing.
+2. Place descriptors (Lake, Mount, Cape, …) may absorb a bare form at most 3× their own size (Vesuvius 2.6×
+   merges; Michigan 3.9× and Kentucky 145× do not).
+3. First names and titles: when the bare form has ≥10 clues, ≥20% must use a personal pronoun
+   (`Form.personal`, counted in SQL). Live shares: namesakes 0–13%, people mostly 25%+. Known misses: Salieri
+   splits; Hershey, Prince Philip, Wrigley still merge.
+Resolve now handles splits: `follow_splits` moves a deck row (card, reviews, hooks) to the side that holds
+most of its active hooks' clues when that side has no row (53 rows on the live dry run, e.g. "the University
+of Wisconsin" → Wisconsin, "liquid water" → water; "vitamin C" stays while the letter C splits off);
+n-grams are re-keyed by clue; `retire_foreign_hooks` drops hooks whose clues mostly belong elsewhere.
