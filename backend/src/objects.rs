@@ -889,8 +889,10 @@ async fn judge_batch(key: String, inputs: Vec<JudgeInput>) -> Result<Vec<(i32, J
             (Some(r), Some(ruling)) if verdict(ruling) == Verdict::Pass => {
                 out.push((i.id, JudgeOutcome::Rewritten { cue: r.cue.clone(), rivals: others }))
             }
+            // The list page explains the drop by the hint the user saw, so
+            // the original's rivals are kept, not the failed repair's.
             (Some(_), Some(ruling)) => {
-                out.push((i.id, JudgeOutcome::Failed { verdict: verdict(ruling), rivals: ruling.others.clone() }))
+                out.push((i.id, JudgeOutcome::Failed { verdict: verdict(ruling), rivals: others }))
             }
             // The repair came back unparseable or failed a gate: the first ruling stands.
             (None, _) if rewrites.contains_key(&i.id) => out.push((i.id, JudgeOutcome::Failed { verdict: v, rivals: others })),
