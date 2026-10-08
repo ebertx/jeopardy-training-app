@@ -69,6 +69,11 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
 
     // 2. merge deck rows: the old (0008) norms of an entity's forms may map to
     //    several pavlov_answers rows — keep one, move cards/reviews, re-key cues.
+    //    A row sitting at ANOTHER live entity's key belongs to that entity and
+    //    is never pulled in: a rare capitalized "Violin" still licensed into
+    //    "his stradivarius violin" must not drag back the row `follow_splits`
+    //    just moved to "violin".
+    let live_keys: std::collections::HashSet<&str> = entities.iter().map(|e| e.key.as_str()).collect();
     let mut merged = 0usize;
     let mut renamed = 0usize;
     for e in &entities {
@@ -87,6 +92,7 @@ pub async fn run_resolve(state: &Arc<AppState>) -> Result<(), AppError> {
         if !old_norms.contains(&e.key) {
             old_norms.push(e.key.clone());
         }
+        old_norms.retain(|n| *n == e.key || !live_keys.contains(n.as_str()));
         let deck: Vec<(i32, String)> = sqlx::query_as(
             "SELECT id, answer_norm FROM pavlov_answers WHERE answer_norm = ANY($1)
              ORDER BY answer_freq DESC, id",
